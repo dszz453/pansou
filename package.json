@@ -1,0 +1,32 @@
+{
+  "name": "cf-pansou",
+  "version": "1.0.0",
+  "description": "高性能网盘搜索与聚合工具，支持部署在 Cloudflare Workers，支持后台管理 TG 频道与搜索插件，兼容 pansou-web API",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "fetch-vendor": "node fetch-vendor.mjs",
+    "build:css": "tailwindcss -c tailwind.config.js -i src/tailwind-input.css -o vendor/tailwind.css --minify",
+    "build": "node build.mjs"
+  },
+  "keywords": [
+    "cloudflare-worker",
+    "pansou",
+    "panhub",
+    "netdisk-search",
+    "quark",
+    "aliyun",
+    "baidu",
+    "telegram"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241230.0",
+    "esbuild": "^0.24.0",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.99.0"
+  }
+}

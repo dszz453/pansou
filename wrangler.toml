@@ -1,0 +1,16 @@
+name = "pansou"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ADMIN_PASSWORD = "admin"
+DEFAULT_CONCURRENCY = "8"
+CACHE_TTL = "300"
+TG_PROXY_URL = ""
+
+# 推荐绑定 KV 数据库用于后台动态持久化配置和缓存
+# 执行 `wrangler kv:namespace create PANSOU_KV` 获取 ID 后填入下方
+# [[kv_namespaces]]
+# binding = "PANSOU_KV"
+# id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"

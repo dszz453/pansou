@@ -1,0 +1,59 @@
+# 依赖与构建产物
+node_modules/
+dist/
+.wrangler/
+src/vendor.generated.ts
+
+# 工作区私有数据
+.workbuddy/
+
+# 一次性调试 / 探针脚本（保留在本地，不入库）
+build_tgtest.mjs
+call_ocr.js
+check-and-clean.js
+check_tools.py
+cmp.mjs
+debug-search.js
+e2e_check.mjs
+gh_push.mjs
+import-to-kv.js
+import_settings.mjs
+live_verify.mjs
+probe_*.mjs
+process-inputs.js
+ref_check.mjs
+refs/
+run_ocr.ps1
+run_rapidocr.py
+search_verify.mjs
+serve.mjs
+test-domain.js
+test_entry.ts
+test_parse_tg.mjs
+unit_check.mjs
+verify.mjs
+verify_ui.mjs
+win_ocr.cs
+
+# Tailwind Play CDN 运行时（已改为预编译 CSS，不再需要）
+vendor/tailwind.js
+
+# 临时调试 / 测试产物
+*.log
+tg_*.html
+feed_*.html
+live_*.html
+live_*.js
+chk_*.js
+check_inline.js
+r1.html
+c1.log
+chrome_err.log
+a.json
+b.json
+all.json
+up1.json
+up2.json
+auth_url.txt
+kv_settings.json
+ref_channels.json
