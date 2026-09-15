@@ -6,7 +6,8 @@ export const HTML_TEMPLATE = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PanSou & PanHub · 极速网盘搜索聚合</title>
+  <title>PanSou Edge · 极速网盘搜索聚合</title>
+  <meta name="application-name" content="PanSou Edge">
   <!-- 全部前端资源同源自托管（无 unpkg / cdnjs / cdn.tailwindcss.com 等海外 CDN 依赖） -->
   <link rel="stylesheet" href="/assets/app.css?v=${VENDOR_VERSION}">
   <style>

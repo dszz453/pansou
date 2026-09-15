@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 一键部署 cf-pansou 到 Cloudflare Workers
+ * 一键部署 PanSou Edge 到 Cloudflare Workers
  *
  * 用法：
  *   node deploy.mjs <API_TOKEN> [ACCOUNT_ID] [WORKER_NAME]
@@ -73,7 +73,7 @@ function die(msg, data) {
 }
 
 (async () => {
-  console.log('=== cf-pansou 部署开始 ===\n');
+  console.log('=== PanSou Edge 部署开始 ===\n');
 
   // ---------- 0. 校验 Token 与账号 ----------
   const acc = await api('GET', `/accounts/${accountId}`);
