@@ -2,7 +2,7 @@
 
 参考 [fish2018/pansou-web](https://github.com/fish2018/pansou-web) 与 [panhub.shenzjd.com](https://github.com/wu529778790/panhub.shenzjd.com) 架构设计，基于 **Cloudflare Workers** 边缘无服务器环境开发的高性能网盘聚合搜索工具。
 
-> 📦 **源码仓库**：<https://github.com/dszz453/pansou>
+> 📦 **源码仓库**：<https://github.com/dszz453/pansou-edge>
 
 ---
 
@@ -10,7 +10,7 @@
 
 | 项目 | 值 |
 | :--- | :--- |
-| **源码仓库** | [github.com/dszz453/pansou](https://github.com/dszz453/pansou) |
+| **源码仓库** | [github.com/dszz453/pansou-edge](https://github.com/dszz453/pansou-edge) |
 | **部署地址** | 已在 Cloudflare Workers 上线（自定义域名请按 [部署指南](#-部署指南) 自行绑定） |
 | **后台管理** | 首页右上角「管理后台」，默认密码 `admin` |
 | **KV 绑定** | 变量名 `PANSOU_KV`，命名空间 ID 使用你自己的 |
