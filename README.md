@@ -17,7 +17,7 @@
 | **后台管理** | 首页右上角「管理后台」，默认密码 `admin` |
 | **KV 绑定** | `PANSOU_KV` = `f7ce13fbd0e344bebe060a64c94af64f` |
 | **网盘支持** | 百度、阿里、夸克、光鸭、天翼、UC、迅雷、移动、115、123、PikPak、磁力、电驴等 15 类 |
-| **内置资源池** | 143 个优质 Telegram 网盘频道 + 搜索插件预设库 |
+| **内置资源池** | 143 个 Telegram 网盘频道（全部启用） + 1 个聚合节点插件（内含 89 个子插件源） |
 | **批量导入** | 后台支持多行文本/逗号/JSON 批量导入，自动剔除 @/URL 前缀与智能识别 |
 
 > ⚠️ **国内网络提醒**：`*.workers.dev` 在中国大陆被 DNS 污染（解析到 `103.73.161.52`），直连会失败。
@@ -29,9 +29,11 @@
 ## ✨ 核心特性
 
 - 🚀 **Serverless 边缘部署**：原生运行在 Cloudflare 全球数百个边缘节点，无需自备服务器，毫秒级响应。
-- 🔍 **多源并发搜索**：内置并发抓取公开 Telegram 频道（如阿里、夸克、百度、天翼、迅雷、115 等）与外部 REST API 搜索插件。
-- 🛠 **动态管理后台**：支持在 Web 后台**动态添加/修改/启停 TG 搜索频道与第三方插件**，无需重新构建部署代码。
+- 🔍 **多源并发搜索**：内置并发抓取 143 个公开 Telegram 频道（阿里、夸克、百度、天翼、迅雷、115、123、UC、PikPak 等），**不依赖第三方聚合节点**。
+- 🔌 **插件引擎（双类型）**：支持 `pansou` 兼容节点与任意自定义 REST API（可配字段映射），一次请求即可并行拉取 89 个子插件源的合并结果，补齐 TG 频道之外的资源；后台可增删/启停/调参。
+- 🛠 **动态管理后台**：支持在 Web 后台**动态增删/启停 TG 搜索频道与搜索插件、调整并发与缓存策略**，无需重新构建部署代码。
 - 🔗 **全网盘智能识别与去重**：自动提取百度、阿里、夸克、天翼、UC、115、PikPak、123网盘、磁力/电驴等链接与提取码密码。
+- 🛡 **插件高可用**：节点被上游 WAF 拦截时自动重试（3 次带退避），并用**过期缓存兜底**——只要某关键词成功抓过一次，之后即便节点被拦也照常有结果。
 - 📡 **标准 API 兼容**：完美兼容 `fish2018/pansou` 的 API 标准（GET/POST `/api/search`），可无缝作为影视工具或第三方的搜索后端。
 - 🎨 **现代化响应式 UI**：内置美观的 Vue 3 + TailwindCSS 前端界面，支持分类筛选、一键直达和快速复制。
 
@@ -46,8 +48,10 @@
 │   ├── parser.ts       # 智能网盘 URL / 提取码 / 标题标签解析器
 │   ├── tg.ts           # Telegram 公开频道内容抓取与 HTML 解析
 │   ├── admin.ts        # 系统配置与 KV 存储管理模块
-│   ├── defaults.ts     # 内置 143 个 TG 网盘频道默认配置
+│   ├── defaults.ts     # 内置 143 个 TG 频道 + 89 个插件源默认配置
 │   ├── icons.ts        # 内联 SVG 图标（零外部图标库依赖）
+│   ├── plugins/
+│   │   └── index.ts    # 插件引擎：pansou 兼容节点 + 自定义 REST API（含重试与总预算控制）
 │   ├── tailwind-input.css  # Tailwind 入口（预编译为 vendor/tailwind.css）
 │   └── ui.html.ts      # 内置前端 Vue 3 + Tailwind 单页界面
 ├── vendor/             # 同源自托管前端资源（Vue 3 / 预编译 Tailwind）
@@ -55,13 +59,16 @@
 ├── build.mjs           # 构建脚本（含内联脚本语法护栏）
 ├── deploy.mjs          # 一键部署脚本（跨平台）
 ├── deploy.bat          # 一键部署脚本（Windows）
-├── reset_settings.mjs  # 重置 KV 系统设置（全量启用 143 频道 / 清除废弃插件）
+├── reset_settings.mjs  # 重置 KV 系统设置（全量启用 143 频道 + 恢复默认插件）
+├── verify_full.mjs          # 143 频道端到端分片搜索验证（BASE=域名 可指定站点）
+├── verify_plugin_stale.mjs  # 插件过期缓存兜底验证（连续强制刷新看是否会出现空结果）
+├── compare_plugins.mjs      # 量化插件增益（纯频道 / 纯插件 / 合并 三档对比）
+├── final_check.mjs          # 单站点端到端验收（页面 / 健康 / 插件 / 搜索）
 ├── fetch-vendor.mjs    # 拉取 Vue 3 到 vendor/（离线自托管用）
 ├── serve-local.mjs     # 本地预览服务器（国内网络下预览界面用）
 ├── smoke-test.mjs      # 路由与接口冒烟测试
 ├── search-test.mjs     # 真实联网搜索测试
 ├── test_parser.mjs     # 解析器单元测试
-├── verify_full.mjs     # 143 频道端到端分片搜索验证（BASE=域名 可指定站点）
 ├── wrangler.toml       # Cloudflare Worker 配置文件
 ├── package.json        # 依赖与编译脚本
 ├── tsconfig.json       # TypeScript 编译配置
@@ -115,18 +122,20 @@
 
 ---
 
-## 🔧 运维：检查与重置频道配置
+## 🔧 运维：检查与重置配置
 
 系统设置保存在 KV 的 `pansou_system_settings` 键中。**如果这个键存在但只启用了部分频道，搜索覆盖会明显变少。**
 
-### 检查当前生效的频道数
+### 检查当前生效的频道数与插件数
 
 ```bash
 curl https://你的域名/api/health
-# {"status":"ok",...,"channels_total":143,"channels_enabled":143,...}
+# {"status":"ok","engine":"native-tg+pansou-plugins",
+#  "channels_total":143,"channels_enabled":143,
+#  "plugins_total":1,"plugins_enabled":1,"max_plugins_per_call":2,...}
 ```
 
-`channels_enabled` 应等于 `channels_total`（143）。若小于 143，说明 KV 里存着一份旧的、部分禁用的配置。
+`channels_enabled` 应等于 `channels_total`（143），`plugins_enabled` 应等于 `plugins_total`。若偏小，说明 KV 里存着一份旧的、部分禁用的配置。
 
 ### 一键重置为全量启用
 
@@ -136,7 +145,7 @@ node reset_settings.mjs <API_TOKEN> <ACCOUNT_ID> <KV_NAMESPACE_ID>
 
 脚本会：
 - 把全部 **143 个频道**重置为启用（前 24 个为高优先级，首批检索并立即渲染）
-- 删除已废弃的第三方聚合节点 `plugins` 字段（代码中已无插件引擎）
+- 把 `plugins` 恢复为**内置默认插件**（PanSou 聚合节点，含 89 个子插件源）
 - 保留原有的 `adminPassword` 与 `hotSearches`
 
 > 也可以直接在后台「管理 → 恢复出厂配置」达到同样效果。
@@ -149,9 +158,69 @@ node verify_full.mjs 庆余年 流浪地球 繁花
 
 # 指定任意站点
 BASE=https://pansou.dszz.qzz.io node verify_full.mjs 庆余年
+
+# 单站点四项全查（页面 / 健康 / 插件 / 搜索）
+node final_check.mjs https://pansou.dszz.us.ci
+
+# 量化插件带来的增量（纯频道 / 纯插件 / 合并 三档对比）
+node compare_plugins.mjs 流浪地球 庆余年
+
+# 验证插件「过期缓存兜底」是否生效（连续强制刷新，看是否出现空结果）
+node verify_plugin_stale.mjs 奥本海默 https://pansou.dszz.us.ci 10
 ```
 
-会模拟前端的「8 频道/片 × 4 路并发」调度跑满全量频道，输出每个关键词的结果总数、耗时与网盘分布。
+`verify_full.mjs` 会模拟前端的「8 频道/片 × 4 路并发」调度跑满全量频道，输出每个关键词的结果总数、耗时与网盘分布。
+
+---
+
+## 🔌 插件系统
+
+### 两种插件类型
+
+| 类型 | 说明 | 关键字段 |
+| :--- | :--- | :--- |
+| `pansou` | 兼容 `fish2018/pansou` 协议的聚合节点，一次请求返回 `merged_by_type` | `apiEndpoint`、`pluginIds`（远端子插件列表） |
+| `custom` | 任意 REST API，按 `responseMapping` 把返回 JSON 映射为标准结果 | `apiEndpoint`、`method`、`bodyTemplate`、`responseMapping` |
+
+后台「管理后台 → 搜索插件」可增删、启停、编辑，配置存入 KV 的 `plugins` 字段。
+
+### 搜索时的调用时机（重要）
+
+前端分片调度会把 143 个频道切成 **18 片并行请求**。如果每一片都触发插件调用，一次搜索就会把外部节点打 **18 遍**。
+
+因此约定：
+- **带 `channels` 参数的分片请求 → 不调插件**；
+- 前端在整次搜索中**额外单独发一次** `{"plugins_only": true}` 请求调插件；
+- 两者并行执行，结果在前端按 URL 去重合并（插件结果最后合并，频道优先）。
+
+### 上游 WAF 与高可用设计
+
+聚合节点背后也是 Cloudflare。**从 Worker 出口发起的请求**会被其 WAF 间歇性拦成 `HTTP 403 / error code: 1003`（约 250ms 即返回）。已实测排除请求头因素——同样的请求头从本地直连是 4/4 全通，问题在 Worker 的共享出口 IP。
+
+对应三层防护：
+
+1. **重试**：最多 3 次，退避 1.2s / 2.4s，受**总预算**约束（单发上限 13s，剩余不足 3s 不再重试），避免最坏情况拖到 30 秒以上。
+2. **过期缓存兜底（stale-while-error）**：缓存值带上写入时间。超过 30 分钟「新鲜期」后先尝试刷新，**刷新失败则继续返回旧数据**（最长保留 6 小时）。效果：某关键词只要成功抓过一次，之后即便节点被拦也照常有结果。
+3. **短缓存空结果**：确实没数据时（新关键词 + 节点被拦）只缓存 60 秒，让后续请求尽快重试。
+
+诊断接口可以直接看到每次尝试的真实状态码与耗时：
+
+```bash
+curl "https://你的域名/api/debug/plugin?kw=流浪地球&rounds=3"
+```
+
+`/api/search` 的 `_meta` 中会返回插件统计，便于定位问题：
+
+| 字段 | 含义 |
+| :--- | :--- |
+| `plugins_queried` | 本次调用的插件数 |
+| `plugins_ok` | 现场抓取成功且有结果的插件数 |
+| `plugins_from_cache` | 命中「新鲜期内」缓存的插件数 |
+| `plugins_stale` | 现场抓取失败、**用过期缓存兜底**成功的插件数 |
+| `plugins_failed` | 彻底没拿到数据的插件数 |
+
+> ⚠️ **调大「单次调用上限」是无效的**：代码里 `MAX_CHANNELS_PER_CALL = 10` 会强制钳制后台的 `maxChannelsPerSearch`，
+> 真实上限永远是 10。全量覆盖靠的是前端分片调度（18 片 × 4 路并发），改后台数值不会让单次调用多跑频道。
 
 ---
 
@@ -177,7 +246,7 @@ BASE=https://pansou.dszz.qzz.io node verify_full.mjs 庆余年
 
 **Account Resources** 选择你的账号；**Zone Resources** 保持默认（不需要）。创建后复制 Token。
 
-> KV 权限是可选的。若不加 KV 权限，脚本会自动以「无 KV 模式」部署，搜索功能完全正常，只是后台修改的频道/插件配置无法持久保存（重启后回到默认值）。
+> KV 权限是可选的。若不加 KV 权限，脚本会自动以「无 KV 模式」部署，搜索功能完全正常，只是后台修改的频道配置无法持久保存（重启后回到默认值）。
 
 #### 第 2 步：运行一键部署
 
@@ -231,7 +300,7 @@ npm run deploy
 | `Authentication error (10000)` | Token 缺少 `Workers Scripts: Edit` | 重新生成 Token 并勾选该权限 |
 | `KV 创建失败` 但仍继续部署 | Token 缺少 KV 权限 | 功能正常；如需持久化配置请补 KV 权限 |
 | 后台保存提示「未绑定 KV」 | Worker 未绑定 `PANSOU_KV` | 在 Settings -> Bindings 中绑定 |
-| 搜索结果为 0 | Worker 所在网络无法访问上游 | 在后台「搜索插件管理」中更换或新增可用的 pansou 兼容节点 |
+| 搜索结果为 0 | Worker 所在网络无法访问 `t.me`，或 KV 中只有少量频道被启用 | 先访问 `/api/debug/tg?ch=PanjClub` 看云端能否拿到消息块；再查 `/api/health` 的 `channels_enabled` 是否为 143，不足则用 `reset_settings.mjs` 重置 |
 
 ---
 
@@ -273,8 +342,10 @@ Content-Type: application/json
 #### 请求参数：
 - `kw` 或 `keyword`: **(必填)** 搜索关键词。
 - `res` 或 `result_type`: 返回格式，可选 `all`（全部）、`merge`（按网盘类型分组）、`results`（原始结果列表）。默认为 `all`。
-- `channels`: 自定义要搜索的 Telegram 频道列表（逗号分隔或数组）。
-- `plugins`: 自定义启用的插件列表。
+- `channels`: 自定义要搜索的 Telegram 频道列表（逗号分隔或数组）。**带上此参数时不会调用插件**（前端分片调度专用）。
+- `plugins`: 自定义要启用的插件列表（插件 `id` 或名称，逗号分隔或数组）。
+- `plugins_only`: `true` 表示**只走插件**、跳过 TG 频道（前端用它单独发一次插件请求）。
+- `no_plugins`: `true` 表示本次不调用任何插件。
 - `cloud_types`: 指定过滤的网盘类型，如 `["baidu", "aliyun", "quark"]`。
 - `refresh` 或 `force_refresh`: `true` 表示跳过缓存强制拉取最新数据。
 

@@ -70,7 +70,7 @@ ${ICONS_CSS}
           搜你想搜，即刻触达
         </h2>
         <p class="text-slate-500 max-w-xl mx-auto text-sm">
-          多源并发聚合 Telegram 频道与网络插件，支持百度、阿里、夸克、UC、光鸭、天翼、迅雷、123、115、PikPak、移动等全网盘
+          原生并发抓取 143 个 Telegram 公开频道，支持百度、阿里、夸克、UC、光鸭、天翼、迅雷、123、115、PikPak、移动等全网盘
         </p>
 
         <!-- 搜索表单 -->
@@ -187,7 +187,7 @@ ${ICONS_CSS}
             <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
               <div class="flex items-center space-x-2 text-slate-500 truncate max-w-[60%]">
                 <i class="fa-solid fa-cloud"></i>
-                <span class="truncate">{{ item.source || 'TG 频道 / 插件' }}</span>
+                <span class="truncate">{{ item.source || 'TG 频道' }}</span>
               </div>
 
               <div class="flex items-center space-x-2">
@@ -322,6 +322,13 @@ ${ICONS_CSS}
                 Telegram 频道 ({{ adminSettings.channels.length }})
               </button>
               <button
+                @click="adminTab = 'plugins'"
+                class="text-sm pb-2 transition"
+                :class="adminTab === 'plugins' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
+              >
+                搜索插件 ({{ (adminSettings.plugins || []).length }})
+              </button>
+              <button
                 @click="adminTab = 'system'"
                 class="text-sm pb-2 transition"
                 :class="adminTab === 'system' ? 'border-b-2 border-blue-600 text-blue-600 font-bold' : 'text-slate-500'"
@@ -409,6 +416,142 @@ ${ICONS_CSS}
                     <button @click="removeChannel(ch)" class="text-red-500 hover:text-red-700">
                       <i class="fa-solid fa-trash"></i>
                     </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. 搜索插件管理 -->
+            <div v-if="adminTab === 'plugins'" class="space-y-4 text-xs">
+              <div class="bg-blue-50 border border-blue-100 p-3 rounded-xl text-blue-800 leading-relaxed">
+                <div class="font-bold mb-1"><i class="fa-solid fa-plug mr-1"></i> 搜索插件是什么？</div>
+                <p>
+                  插件 = <strong>TG 频道之外</strong>的额外资源来源。本项目内置的「PanSou 聚合节点」一次请求即可拿到
+                  <strong>{{ pluginIdCount }}</strong> 个插件源（hunhepan / jikepan / qupansou / mizixing …）的合并结果，
+                  与频道搜索结果自动去重合并。
+                </p>
+                <p class="mt-1">
+                  搜索页每次只会调用插件 <strong>一次</strong>（不是每个分片都调），因为外部节点一次要跑好几秒。
+                </p>
+              </div>
+
+              <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2 rounded-xl">
+                <div class="flex items-center space-x-2">
+                  <span class="text-xs text-slate-500">
+                    已启用: {{ enabledPluginsCount }} / {{ (adminSettings.plugins || []).length }}
+                  </span>
+                  <span class="text-slate-300">|</span>
+                  <label class="text-xs text-slate-500">单次并行插件数</label>
+                  <input
+                    type="number"
+                    v-model="adminSettings.maxPluginsPerSearch"
+                    min="1"
+                    max="5"
+                    class="w-16 px-2 py-1 border rounded-lg bg-white"
+                  />
+                </div>
+                <button
+                  @click="addPlugin"
+                  class="px-2 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  <i class="fa-solid fa-plus mr-1"></i> 新增插件
+                </button>
+              </div>
+
+              <div v-if="(adminSettings.plugins || []).length === 0" class="text-center py-8 text-slate-400">
+                暂无插件。点击「新增插件」接入 pansou 兼容节点或自定义 REST API。
+              </div>
+
+              <div class="space-y-3">
+                <div
+                  v-for="(pl, idx) in adminSettings.plugins"
+                  :key="idx"
+                  class="p-3 bg-slate-50 border rounded-xl space-y-2"
+                >
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3 flex-1">
+                      <input type="checkbox" v-model="pl.enabled" class="rounded text-blue-600" />
+                      <input
+                        type="text"
+                        v-model="pl.name"
+                        placeholder="插件名称"
+                        class="px-2 py-1 border rounded bg-white font-medium text-slate-700 flex-1"
+                      />
+                      <select v-model="pl.type" class="px-2 py-1 border rounded bg-white text-slate-600">
+                        <option value="pansou">pansou 兼容节点</option>
+                        <option value="custom">自定义 REST API</option>
+                      </select>
+                    </div>
+                    <button @click="removePlugin(pl)" class="text-red-500 hover:text-red-700 ml-3">
+                      <i class="fa-solid fa-trash"></i>
+                    </button>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-2">
+                    <div class="col-span-2">
+                      <label class="block text-slate-500 mb-1">接口地址 apiEndpoint</label>
+                      <input
+                        type="text"
+                        v-model="pl.apiEndpoint"
+                        :placeholder="pl.type === 'pansou' ? 'https://your-node.com/api/search' : 'https://api.example.com/search?q={keyword}'"
+                        class="w-full px-2 py-1 border rounded bg-white font-mono text-slate-600"
+                      />
+                    </div>
+                    <div>
+                      <label class="block text-slate-500 mb-1">插件 ID（唯一标识）</label>
+                      <input
+                        type="text"
+                        v-model="pl.id"
+                        placeholder="my_node"
+                        class="w-full px-2 py-1 border rounded bg-white font-mono text-slate-600"
+                      />
+                    </div>
+                    <div v-if="pl.type === 'custom'">
+                      <label class="block text-slate-500 mb-1">请求方法</label>
+                      <select v-model="pl.method" class="w-full px-2 py-1 border rounded bg-white text-slate-600">
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div v-if="pl.type === 'pansou'">
+                    <label class="block text-slate-500 mb-1">
+                      远端插件 ID 列表（逗号分隔，留空表示节点全部启用）
+                    </label>
+                    <textarea
+                      :value="(pl.pluginIds || []).join(',')"
+                      @input="pl.pluginIds = $event.target.value.split(',').map(s => s.trim()).filter(Boolean)"
+                      rows="3"
+                      placeholder="hunhepan,jikepan,qupansou,..."
+                      class="w-full px-2 py-1 border rounded bg-white font-mono text-[11px] text-slate-600"
+                    ></textarea>
+                    <div class="text-slate-400 text-[10px] mt-1">
+                      当前 {{ (pl.pluginIds || []).length }} 个
+                    </div>
+                  </div>
+
+                  <div v-if="pl.type === 'custom'" class="space-y-2">
+                    <div>
+                      <label class="block text-slate-500 mb-1">请求头（JSON，可选，常用于加 Authorization）</label>
+                      <textarea
+                        :value="headersToText(pl.headers)"
+                        @input="pl.headers = parseHeaders($event.target.value)"
+                        rows="2"
+                        placeholder='{"Authorization": "Bearer xxx"}'
+                        class="w-full px-2 py-1 border rounded bg-white font-mono text-[11px] text-slate-600"
+                      ></textarea>
+                    </div>
+                    <div>
+                      <label class="block text-slate-500 mb-1">响应字段映射（JSON，可选）</label>
+                      <textarea
+                        :value="mappingToText(pl.responseMapping)"
+                        @input="pl.responseMapping = parseMapping($event.target.value)"
+                        rows="2"
+                        placeholder='{"resultPath": "data.list", "titleField": "name", "urlField": "link"}'
+                        class="w-full px-2 py-1 border rounded bg-white font-mono text-[11px] text-slate-600"
+                      ></textarea>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -535,8 +678,10 @@ ${ICONS_CSS}
         const channelFilter = ref('');
         const adminSettings = ref({
           channels: [],
+          plugins: [],
           concurrency: 6,
           maxChannelsPerSearch: 8,
+          maxPluginsPerSearch: 2,
           cacheTtl: 300,
           tgProxyUrl: '',
           adminPassword: ''
@@ -597,6 +742,19 @@ ${ICONS_CSS}
           adminSettings.value.channels.filter(c => c.enabled).length
         );
 
+        const enabledPluginsCount = computed(() =>
+          (adminSettings.value.plugins || []).filter(p => p.enabled).length
+        );
+
+        /** 当前所有插件引用的远端插件源总数，用于界面提示 */
+        const pluginIdCount = computed(() => {
+          const ids = new Set();
+          for (const p of adminSettings.value.plugins || []) {
+            for (const id of p.pluginIds || []) ids.add(id);
+          }
+          return ids.size;
+        });
+
         /**
          * 分片并发搜索
          * 后端一次调用只处理一个小分片（受 Cloudflare Workers 子请求限制），
@@ -604,8 +762,9 @@ ${ICONS_CSS}
          */
         const SHARD_CONCURRENCY = 4;
 
-        // 频道缓存（避免每次搜索都请求 /api/channels）
+        // 频道 / 插件缓存（避免每次搜索都重复请求元信息）
         let cachedChannelsInfo = null;
+        let cachedPluginsInfo = null;
 
         const doSearch = async () => {
           const kw = keyword.value.trim();
@@ -628,56 +787,93 @@ ${ICONS_CSS}
             mergedResults.value = snapshot;
             totalCount.value = seen.size;
           };
+          const bump = () => {
+            searchProgress.value = {
+              done: searchProgress.value.done + 1,
+              total: searchProgress.value.total
+            };
+          };
+          const mergeInto = (byType) => {
+            for (const type in byType) {
+              if (!merged[type]) merged[type] = [];
+              for (const item of byType[type]) {
+                if (seen.has(item.url)) continue;
+                seen.add(item.url);
+                merged[type].push(item);
+              }
+            }
+          };
 
           try {
             if (!cachedChannelsInfo) {
               const chRes = await fetch('/api/channels');
               cachedChannelsInfo = await chRes.json();
             }
+            if (!cachedPluginsInfo) {
+              try {
+                const plRes = await fetch('/api/plugins');
+                cachedPluginsInfo = await plRes.json();
+              } catch (e) {
+                cachedPluginsInfo = { plugins: [] };
+              }
+            }
             const all = (cachedChannelsInfo && cachedChannelsInfo.channels) || [];
             const size = (cachedChannelsInfo && cachedChannelsInfo.shard_size) || 8;
+            const pluginCount = ((cachedPluginsInfo && cachedPluginsInfo.plugins) || []).length;
 
             const shards = [];
             for (let i = 0; i < all.length; i += size) shards.push(all.slice(i, i + size));
 
-            searchProgress.value = { done: 0, total: shards.length };
-            if (shards.length === 0) return;
+            // 进度总量 = 频道分片数 + 插件（有的话算 1 步，因为整次搜索只调一次插件）
+            searchProgress.value = { done: 0, total: shards.length + (pluginCount > 0 ? 1 : 0) };
 
-            let cursor = 0;
-            const worker = async () => {
-              while (true) {
-                const idx = cursor++;
-                if (idx >= shards.length) return;
-                try {
-                  const r = await fetch('/api/search', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ kw, channels: shards[idx], res: 'merge' })
-                  });
-                  const d = await r.json();
-                  const byType = d.merged_by_type || {};
-                  for (const type in byType) {
-                    if (!merged[type]) merged[type] = [];
-                    for (const item of byType[type]) {
-                      if (seen.has(item.url)) continue;
-                      seen.add(item.url);
-                      merged[type].push(item);
-                    }
+            // 频道分片任务
+            const shardTask = async () => {
+              if (shards.length === 0) return;
+              let cursor = 0;
+              const worker = async () => {
+                while (true) {
+                  const idx = cursor++;
+                  if (idx >= shards.length) return;
+                  try {
+                    const r = await fetch('/api/search', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ kw, channels: shards[idx], res: 'merge' })
+                    });
+                    const d = await r.json();
+                    mergeInto(d.merged_by_type || {});
+                    commit();
+                  } catch (e) {
+                    console.warn('分片检索失败', shards[idx], e);
                   }
-                  commit();
-                } catch (e) {
-                  console.warn('分片检索失败', shards[idx], e);
+                  bump();
                 }
-                searchProgress.value = {
-                  done: searchProgress.value.done + 1,
-                  total: searchProgress.value.total
-                };
-              }
+              };
+              await Promise.all(
+                new Array(Math.min(SHARD_CONCURRENCY, shards.length)).fill(0).map(worker)
+              );
             };
 
-            await Promise.all(
-              new Array(Math.min(SHARD_CONCURRENCY, shards.length)).fill(0).map(worker)
-            );
+            // 插件任务：整次搜索只发一次，避免每个分片都去调外部聚合节点
+            const pluginTask = async () => {
+              if (pluginCount === 0) return;
+              try {
+                const r = await fetch('/api/search', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ kw, plugins_only: true, res: 'merge' })
+                });
+                const d = await r.json();
+                mergeInto(d.merged_by_type || {});
+                commit();
+              } catch (e) {
+                console.warn('插件检索失败', e);
+              }
+              bump();
+            };
+
+            await Promise.all([shardTask(), pluginTask()]);
           } catch (e) {
             console.error('搜索异常', e);
             alert('搜索请求失败，请检查网络连接');
@@ -728,6 +924,9 @@ ${ICONS_CSS}
             });
             if (res.ok) {
               const data = await res.json();
+              // 兼容旧配置：补齐插件相关字段，避免界面读到 undefined 报错
+              if (!Array.isArray(data.plugins)) data.plugins = [];
+              if (typeof data.maxPluginsPerSearch !== 'number') data.maxPluginsPerSearch = 2;
               adminSettings.value = data;
               kvBound.value = data.kv_bound !== false;
               isAdminAuthed.value = true;
@@ -760,6 +959,64 @@ ${ICONS_CSS}
         const removeChannel = (ch) => {
           if (confirm(\`确定删除频道 @\${ch.name} 吗？\`)) {
             adminSettings.value.channels = adminSettings.value.channels.filter(c => c !== ch);
+          }
+        };
+
+        // ---------- 搜索插件管理 ----------
+
+        const addPlugin = () => {
+          const id = prompt('请输入插件 ID（唯一标识，建议用字母/数字/下划线）:');
+          if (!id || !id.trim()) return;
+          const endpoint = prompt('请输入接口地址：\\n· pansou 兼容节点填 /api/search 地址\\n· 自定义 API 可用 {keyword} 占位');
+          if (!endpoint || !endpoint.trim()) return;
+
+          if (!adminSettings.value.plugins) adminSettings.value.plugins = [];
+          adminSettings.value.plugins.push({
+            id: id.trim(),
+            name: id.trim(),
+            enabled: true,
+            type: 'pansou',
+            apiEndpoint: endpoint.trim(),
+            pluginIds: []
+          });
+        };
+
+        const removePlugin = (pl) => {
+          if (!confirm('确定删除插件「' + (pl.name || pl.id) + '」吗？')) return;
+          adminSettings.value.plugins = (adminSettings.value.plugins || []).filter(p => p !== pl);
+        };
+
+        // 请求头 / 字段映射在界面上以 JSON 文本编辑，解析失败时静默忽略，
+        // 避免用户输入到一半就报错。
+        const headersToText = (h) => {
+          if (!h || typeof h !== 'object' || Object.keys(h).length === 0) return '';
+          try { return JSON.stringify(h); } catch (e) { return ''; }
+        };
+
+        const parseHeaders = (text) => {
+          const t = String(text || '').trim();
+          if (!t) return undefined;
+          try {
+            const o = JSON.parse(t);
+            return (o && typeof o === 'object') ? o : undefined;
+          } catch (e) {
+            return undefined;
+          }
+        };
+
+        const mappingToText = (m) => {
+          if (!m || typeof m !== 'object' || Object.keys(m).length === 0) return '';
+          try { return JSON.stringify(m); } catch (e) { return ''; }
+        };
+
+        const parseMapping = (text) => {
+          const t = String(text || '').trim();
+          if (!t) return undefined;
+          try {
+            const o = JSON.parse(t);
+            return (o && typeof o === 'object') ? o : undefined;
+          } catch (e) {
+            return undefined;
           }
         };
 
@@ -815,8 +1072,10 @@ ${ICONS_CSS}
         const exportCurrentConfig = () => {
           const exportData = {
             channels: adminSettings.value.channels,
+            plugins: adminSettings.value.plugins || [],
             concurrency: adminSettings.value.concurrency,
             maxChannelsPerSearch: adminSettings.value.maxChannelsPerSearch,
+            maxPluginsPerSearch: adminSettings.value.maxPluginsPerSearch,
             cacheTtl: adminSettings.value.cacheTtl,
             exportedAt: new Date().toISOString()
           };
@@ -824,7 +1083,7 @@ ${ICONS_CSS}
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = \`pansou-channels-\${Date.now()}.json\`;
+          a.download = \`pansou-config-\${Date.now()}.json\`;
           a.click();
         };
 
@@ -833,8 +1092,10 @@ ${ICONS_CSS}
           try {
             const payload = {
               channels: adminSettings.value.channels,
+              plugins: adminSettings.value.plugins || [],
               concurrency: Number(adminSettings.value.concurrency) || 6,
               maxChannelsPerSearch: Number(adminSettings.value.maxChannelsPerSearch) || 8,
+              maxPluginsPerSearch: Number(adminSettings.value.maxPluginsPerSearch) || 2,
               cacheTtl: Number(adminSettings.value.cacheTtl) || 300,
               tgProxyUrl: adminSettings.value.tgProxyUrl || ''
             };
@@ -854,7 +1115,8 @@ ${ICONS_CSS}
 
             if (res.ok && data.code === 0) {
               const enabledCount = payload.channels.filter(c => c.enabled).length;
-              alert(\`配置保存成功！当前已启用 \${enabledCount} 个频道，搜索时将全部覆盖。\`);
+              const enabledPlugins = payload.plugins.filter(p => p.enabled).length;
+              alert(\`配置保存成功！当前已启用 \${enabledCount} 个频道、\${enabledPlugins} 个插件。\`);
               if (adminSettings.value.adminPassword) {
                 localStorage.setItem('pansou_admin_token', adminSettings.value.adminPassword);
               }
@@ -866,9 +1128,9 @@ ${ICONS_CSS}
           }
         };
 
-        // 恢复出厂配置（重新载入内置频道库）
+        // 恢复出厂配置（重新载入内置频道库与插件）
         const resetToDefaults = async () => {
-          if (!confirm('确定要恢复出厂配置吗？\\n将重新载入内置的全部 Telegram 频道，当前自定义修改会被覆盖。')) return;
+          if (!confirm('确定要恢复出厂配置吗？\\n将重新载入内置的全部 Telegram 频道与搜索插件，当前自定义修改会被覆盖。')) return;
           try {
             const res = await fetch('/api/admin/defaults', {
               headers: { 'Authorization': 'Bearer ' + (adminInputPwd.value.trim() || localStorage.getItem('pansou_admin_token') || 'admin') }
@@ -879,8 +1141,10 @@ ${ICONS_CSS}
             }
             const data = await res.json();
             adminSettings.value.channels = data.channels || [];
+            adminSettings.value.plugins = data.plugins || [];
             adminSettings.value.maxChannelsPerSearch = data.maxChannelsPerSearch || 8;
-            alert(\`已载入内置频道库：共 \${adminSettings.value.channels.length} 个频道。\\n请点击「保存配置」写入生效。\`);
+            adminSettings.value.maxPluginsPerSearch = data.maxPluginsPerSearch || 2;
+            alert(\`已载入内置配置：\${adminSettings.value.channels.length} 个频道、\${adminSettings.value.plugins.length} 个插件。\\n请点击「保存配置」写入生效。\`);
           } catch (e) {
             alert('载入失败');
           }
@@ -932,6 +1196,8 @@ ${ICONS_CSS}
           kvBound,
           filteredChannels,
           enabledChannelsCount,
+          enabledPluginsCount,
+          pluginIdCount,
           getCloudLabel,
           doSearch,
           quickSearch,
@@ -942,6 +1208,12 @@ ${ICONS_CSS}
           toggleAllChannels,
           addChannel,
           removeChannel,
+          addPlugin,
+          removePlugin,
+          headersToText,
+          parseHeaders,
+          mappingToText,
+          parseMapping,
           openBatchModal,
           doBatchImport,
           exportCurrentConfig,

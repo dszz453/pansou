@@ -1,4 +1,4 @@
-import { TgChannelConfig } from './types';
+import { PluginConfig, TgChannelConfig } from './types';
 
 /**
  * 单次调用默认处理的频道数上限（前端未指定时使用）。
@@ -87,3 +87,50 @@ export const DEFAULT_CHANNELS: TgChannelConfig[] = ALL_CHANNELS.map((name, index
   priority: index < PRIORITY_CHANNEL_COUNT ? 1 : 2,
   description: guessDescription(name)
 }));
+
+/**
+ * 单次搜索默认并行调用的插件数上限。
+ * 插件是完整的外部 HTTP 请求（聚合节点一次要跑 5~8 秒），比单个 TG 频道重得多，
+ * 因此默认只开很小的并发，避免拖垮整体响应时间。
+ */
+export const DEFAULT_MAX_PLUGINS = 2;
+
+/**
+ * 原始插件源清单（来自 fish2018/pansou 的 plugin/ 目录）。
+ *
+ * 这些是 pansou 生态里的「搜索插件」，每个对应一个外部资源站的抓取实现。
+ * 本 Worker 不自己实现它们（它们是 Go 代码，依赖大量站点特定的反爬逻辑），
+ * 而是通过一个「pansou 兼容聚合节点」一次性调用：节点内部并行跑这些插件。
+ */
+const RAW_PLUGINS = `hunhepan,jikepan,panwiki,pansearch,panta,qupansou,hdr4k,pan666,susu,thepiratebay,
+wanou,xuexizhinan,panyq,zhizhen,labi,muou,ouge,shandian,duoduo,huban,
+cyg,erxiao,miaoso,fox4k,pianku,clmao,wuji,cldi,xiaozhang,libvio,
+leijing,xb6v,xys,ddys,hdmoli,yuhuage,u3c3,javdb,clxiong,jutoushe,
+sdso,xiaoji,xdyh,haisou,bixin,djgou,nyaa,xinjuc,aikanzy,qupanshe,
+xdpan,discourse,yunsou,qqpd,ahhhhfs,nsgame,gying,quark4k,quarksoo,sousou,
+ash,weibo,feikuai,kkmao,alupan,ypfxw,mikuclub,daishudj,dyyj,meitizy,
+jsnoteclub,mizixing,lou1,yiove,zxzj,qingying,kkv,yulinshufa,duanjuw,jupansou,
+lingjisp,quarktv,dyyjpro,gaoqing888,panlian,panzun,qiwei,melost,yunso`;
+
+/** 去重后的全部插件源 id */
+export const ALL_PLUGIN_IDS: string[] = splitUnique(RAW_PLUGINS);
+
+/**
+ * 默认插件配置：只放一个「聚合节点」。
+ *
+ * 之所以不逐个子插件配置，是因为这些插件本质上都是对海外/第三方站点的一次 HTTP 抓取，
+ * 由 Cloudflare Worker 直连既慢又容易失败（且每个站点反爬策略不同）；
+ * 交给一个已经跑通的 pansou 兼容节点聚合，一次请求就能拿到 89 个源的合并结果。
+ *
+ * 想换成自建节点，只要把 apiEndpoint 改成你的 pansou 服务地址即可（后台可改）。
+ */
+export const DEFAULT_PLUGINS: PluginConfig[] = [
+  {
+    id: 'pansou_aggregate',
+    name: `PanSou 聚合节点（${ALL_PLUGIN_IDS.length} 个插件源）`,
+    enabled: true,
+    type: 'pansou',
+    apiEndpoint: 'https://so.252035.xyz/api/search',
+    pluginIds: ALL_PLUGIN_IDS
+  }
+];

@@ -65,3 +65,16 @@ up2.json
 auth_url.txt
 kv_settings.json
 ref_channels.json
+
+# 验证/诊断过程产生的临时响应体
+dbg.json
+dbg_show.mjs
+h.json
+pj.json
+t.json
+so_test.json
+so_r.json
+qzz_*.txt
+q_search.json
+livechk.html
+live_p.html

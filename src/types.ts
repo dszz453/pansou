@@ -57,6 +57,41 @@ export interface TgChannelConfig {
   description?: string;
 }
 
+/** 自定义 REST API 插件的响应字段映射（把任意 JSON 映射成标准结果） */
+export interface PluginResponseMapping {
+  /** 结果数组路径，如 "data.list"；留空则自动探测 data / list / results */
+  resultPath?: string;
+  titleField?: string;
+  contentField?: string;
+  urlField?: string;
+  pwdField?: string;
+  dateField?: string;
+}
+
+/**
+ * 搜索插件配置
+ *
+ * - type = 'pansou'：调用任意「pansou 兼容」的 `/api/search` 节点，
+ *   通过 `plugins=id1,id2` 指定远端启用哪些子插件（默认节点聚合了 89 个源）。
+ * - type = 'custom'：调用任意 REST API，用 responseMapping 做字段映射。
+ */
+export interface PluginConfig {
+  id: string;
+  name: string;
+  enabled: boolean;
+  type: 'pansou' | 'custom';
+  /** pansou 类型填到 /api/search；custom 类型可用 {keyword} 占位 */
+  apiEndpoint: string;
+  /** 仅 pansou 类型：远端要启用的插件 id 列表 */
+  pluginIds?: string[];
+  /** 自定义请求头（如 Authorization） */
+  headers?: Record<string, string>;
+  method?: 'GET' | 'POST';
+  /** 仅 POST：请求体模板，`{keyword}` 会被替换为关键词 */
+  bodyTemplate?: string;
+  responseMapping?: PluginResponseMapping;
+}
+
 export interface SystemSettings {
   adminPassword?: string;
   concurrency: number;
@@ -65,6 +100,10 @@ export interface SystemSettings {
   /** 单次调用最多处理的频道数（受 Workers 子请求上限约束，前端按片调度） */
   maxChannelsPerSearch?: number;
   channels: TgChannelConfig[];
+  /** 搜索插件（外部聚合节点 / 自定义 REST API） */
+  plugins: PluginConfig[];
+  /** 单次搜索允许并行调用的插件数上限 */
+  maxPluginsPerSearch?: number;
   hotSearches: string[];
 }
 

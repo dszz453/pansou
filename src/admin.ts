@@ -1,5 +1,5 @@
 import { Env, SystemSettings } from './types';
-import { DEFAULT_CHANNELS, DEFAULT_MAX_CHANNELS } from './defaults';
+import { DEFAULT_CHANNELS, DEFAULT_PLUGINS, DEFAULT_MAX_CHANNELS, DEFAULT_MAX_PLUGINS } from './defaults';
 
 const SETTINGS_KEY = 'pansou_system_settings';
 
@@ -16,6 +16,8 @@ export function buildDefaultSettings(env: Env): SystemSettings {
     tgProxyUrl: env.TG_PROXY_URL || '',
     maxChannelsPerSearch: DEFAULT_MAX_CHANNELS,
     channels: DEFAULT_CHANNELS,
+    plugins: DEFAULT_PLUGINS,
+    maxPluginsPerSearch: DEFAULT_MAX_PLUGINS,
     hotSearches: DEFAULT_HOT_SEARCHES
   };
 }
@@ -44,7 +46,15 @@ export async function getSystemSettings(env: Env): Promise<SystemSettings> {
         Array.isArray(saved.channels) && saved.channels.length > 0
           ? saved.channels
           : defaultSettings.channels,
+      // 插件允许被清空（后端可能故意只用 TG 频道），因此只在“字段缺失”时回退默认，
+      // 显式存成 [] 表示用户主动关掉了全部插件，要尊重这个选择。
+      plugins:
+        Array.isArray(saved.plugins) ? saved.plugins : defaultSettings.plugins,
       maxChannelsPerSearch: saved.maxChannelsPerSearch || defaultSettings.maxChannelsPerSearch,
+      maxPluginsPerSearch:
+        typeof saved.maxPluginsPerSearch === 'number'
+          ? saved.maxPluginsPerSearch
+          : defaultSettings.maxPluginsPerSearch,
       adminPassword: saved.adminPassword || defaultSettings.adminPassword
     };
   } catch (e) {

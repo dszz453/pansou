@@ -1,5 +1,6 @@
 import {
   Env,
+  PluginConfig,
   SearchResultItem,
   MergedByType,
   MergedLinkItem,
@@ -7,9 +8,10 @@ import {
   CloudType
 } from './types';
 import { getSystemSettings, saveSystemSettings, verifyAdminAuth, buildDefaultSettings } from './admin';
-import { DEFAULT_MAX_CHANNELS } from './defaults';
+import { DEFAULT_MAX_CHANNELS, DEFAULT_MAX_PLUGINS } from './defaults';
 import { searchTgChannel, fetchTgChannelFeed, filterItemsByKeyword } from './tg';
 import { scoreResultRelevance, isTitleRelevant, isUnreliableTitle } from './parser';
+import { executePluginSearch } from './plugins';
 import { HTML_TEMPLATE } from './ui.html';
 import { VUE_JS, TAILWIND_CSS } from './vendor.generated';
 
@@ -22,6 +24,33 @@ const MAX_CHANNELS_PER_CALL = 10;
 
 /** 单个频道抓取超时（t.me 偶发慢响应，超时即视为该频道无结果） */
 const PER_CHANNEL_TIMEOUT_MS = 9000;
+
+/**
+ * 单个插件调用超时。
+ * 插件背后是一个聚合节点（内部要跑几十个子插件），比单个 TG 频道慢得多。
+ * 实测节点在 Worker 侧最慢一次耗时 13.3 秒才返回，因此给到 18 秒 ——
+ * 插件的整体搜索由前端**单独发一个请求**，与频道分片并行、渐进式渲染，
+ * 所以这里放宽超时不会阻塞频道结果的展示。
+ */
+const PER_PLUGIN_TIMEOUT_MS = 18000;
+
+/** 插件结果「新鲜」时长（秒）：在这个窗口内直接命中缓存，不再打节点 */
+const PLUGIN_CACHE_TTL = 1800;
+
+/**
+ * 插件结果「保鲜」时长（秒）——过期缓存兜底（stale-while-error）。
+ *
+ * 背景：聚合节点背后也是 Cloudflare，**从 Worker 出口发起**的请求会被其 WAF
+ * 间歇性拦成 `HTTP 403 / error code: 1003`（本地直连则 4/4 全通，已实测不是请求头问题，
+ * 而是 Worker 共享出口 IP 被节点侧限流）。重试能救回大部分，但无法保证 100%。
+ *
+ * 所以缓存值带上写入时间：超过「新鲜期」后**先尝试刷新，刷新失败则继续返回旧数据**。
+ * 效果：某个关键词只要历史上成功抓到过一次，后续即便节点被拦也照常有结果。
+ */
+const PLUGIN_STALE_TTL = 21600;
+
+/** KV 中缓存「单插件 × 单关键词」结果的键前缀 */
+const PLUGIN_CACHE_PREFIX = 'plg';
 
 /** 空结果的缓存时长（秒）：既避免把临时故障长期缓存，又能防止重复打爆上游 */
 const EMPTY_CACHE_TTL = 60;
@@ -104,18 +133,44 @@ export default {
       });
     }
 
+    // 3.5 插件清单 /api/plugins —— 前端据此决定搜索时是否单独发一次插件请求
+    if (path === '/api/plugins') {
+      const settings = await getSystemSettings(env);
+      const enabled = settings.plugins.filter(p => p.enabled && p.apiEndpoint);
+      return jsonResponse(
+        {
+          code: 0,
+          total: settings.plugins.length,
+          enabled: enabled.length,
+          plugins: enabled.map(p => ({
+            id: p.id,
+            name: p.name,
+            type: p.type,
+            apiEndpoint: p.apiEndpoint,
+            pluginIds: p.pluginIds || []
+          }))
+        },
+        200,
+        { 'Cache-Control': 'public, max-age=300' }
+      );
+    }
+
     // 4. 健康检查 /api/health
     if (path === '/api/health') {
       const settings = await getSystemSettings(env);
       const enabled = settings.channels.filter(c => c.enabled);
+      const enabledPlugins = settings.plugins.filter(p => p.enabled && p.apiEndpoint);
       return jsonResponse({
         status: 'ok',
-        engine: 'native-tg',
-        upstream_node: null,
+        engine: 'native-tg+pansou-plugins',
+        upstream_node: enabledPlugins[0]?.apiEndpoint || null,
         kv_bound: !!env.PANSOU_KV,
         channels_total: settings.channels.length,
         channels_enabled: enabled.length,
+        plugins_total: settings.plugins.length,
+        plugins_enabled: enabledPlugins.length,
         max_channels_per_call: MAX_CHANNELS_PER_CALL,
+        max_plugins_per_call: Math.max(1, settings.maxPluginsPerSearch || DEFAULT_MAX_PLUGINS),
         cache_ttl: settings.cacheTtl
       });
     }
@@ -155,6 +210,79 @@ export default {
       }
     }
 
+    // 4.6 插件诊断 /api/debug/plugin —— 查看 Worker 侧调用插件节点时的真实状态码/耗时
+    if (path === '/api/debug/plugin') {
+      const settings = await getSystemSettings(env);
+      const kw = url.searchParams.get('kw') || '流浪地球';
+      const id = url.searchParams.get('id') || '';
+      const rounds = Math.min(5, Math.max(1, parseInt(url.searchParams.get('rounds') || '3', 10) || 3));
+
+      const targets = id
+        ? settings.plugins.filter(p => p.id === id)
+        : settings.plugins.filter(p => p.enabled && p.apiEndpoint);
+
+      if (targets.length === 0) {
+        return jsonResponse({ ok: false, message: '没有匹配的插件', plugins: settings.plugins.map(p => p.id) });
+      }
+
+      const plugin = targets[0]!;
+      const base = (plugin.apiEndpoint || '').trim();
+      const ids = (plugin.pluginIds || []).filter(Boolean);
+      const sep = base.includes('?') ? '&' : '?';
+      const target =
+        plugin.type === 'pansou'
+          ? `${base}${sep}kw=${encodeURIComponent(kw)}&res=merge${ids.length ? `&plugins=${encodeURIComponent(ids.join(','))}` : ''}`
+          : base.replace(/\{keyword\}/g, encodeURIComponent(kw));
+
+      const attempts: any[] = [];
+      for (let i = 0; i < rounds; i++) {
+        const t0 = Date.now();
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), PER_PLUGIN_TIMEOUT_MS);
+        try {
+          const r = await fetch(target, {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+              Accept: 'application/json, text/plain, */*'
+            },
+            signal: controller.signal
+          });
+          clearTimeout(timer);
+          const text = await r.text();
+          let total: any = null;
+          try {
+            const j = JSON.parse(text);
+            const p = j.data && (j.data.merged_by_type || j.data.results) ? j.data : j;
+            total = p.total != null ? p.total : Object.keys(p.merged_by_type || {}).length;
+          } catch (e) {}
+          attempts.push({
+            try: i + 1,
+            status: r.status,
+            ok: r.ok,
+            ms: Date.now() - t0,
+            bytes: text.length,
+            total,
+            head: text.slice(0, 160)
+          });
+        } catch (e: any) {
+          clearTimeout(timer);
+          attempts.push({
+            try: i + 1,
+            error: String((e && e.name) || '') + ': ' + String((e && e.message) || e),
+            ms: Date.now() - t0
+          });
+        }
+        if (i < rounds - 1) await new Promise(res => setTimeout(res, 800));
+      }
+
+      return jsonResponse({
+        plugin: { id: plugin.id, type: plugin.type, endpoint: base, pluginIds: ids.length },
+        keyword: kw,
+        target,
+        attempts
+      });
+    }
     // 5. 后台配置读写 /api/admin/settings
     if (path === '/api/admin/settings') {
       const isAuthed = await verifyAdminAuth(request, env);
@@ -179,6 +307,8 @@ export default {
           const next = {
             ...current,
             channels: Array.isArray(body.channels) ? body.channels : current.channels,
+            // 插件允许传空数组（= 主动关掉全部插件），因此只判断是否为数组
+            plugins: Array.isArray(body.plugins) ? body.plugins : current.plugins,
             concurrency:
               typeof body.concurrency === 'number' && body.concurrency > 0
                 ? body.concurrency
@@ -191,6 +321,10 @@ export default {
               typeof body.maxChannelsPerSearch === 'number' && body.maxChannelsPerSearch > 0
                 ? body.maxChannelsPerSearch
                 : current.maxChannelsPerSearch,
+            maxPluginsPerSearch:
+              typeof body.maxPluginsPerSearch === 'number' && body.maxPluginsPerSearch > 0
+                ? body.maxPluginsPerSearch
+                : current.maxPluginsPerSearch,
             tgProxyUrl: typeof body.tgProxyUrl === 'string' ? body.tgProxyUrl : current.tgProxyUrl,
             hotSearches: Array.isArray(body.hotSearches) ? body.hotSearches : current.hotSearches
           };
@@ -216,8 +350,10 @@ export default {
       const defaults = buildDefaultSettings(env);
       return jsonResponse({
         channels: defaults.channels,
+        plugins: defaults.plugins,
         concurrency: defaults.concurrency,
         maxChannelsPerSearch: defaults.maxChannelsPerSearch,
+        maxPluginsPerSearch: defaults.maxPluginsPerSearch,
         cacheTtl: defaults.cacheTtl,
         hotSearches: defaults.hotSearches
       });
@@ -248,6 +384,9 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
 
   let keyword = '';
   let customChannels: string[] = [];
+  let customPlugins: string[] = [];
+  let pluginsOnly = false;
+  let noPlugins = false;
   let resultType = 'merge';
   let forceRefresh = false;
   let filterCloudTypes: string[] = [];
@@ -257,9 +396,16 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
     resultType = url.searchParams.get('res') || url.searchParams.get('result_type') || 'merge';
     forceRefresh =
       url.searchParams.get('refresh') === 'true' || url.searchParams.get('force_refresh') === 'true';
+    pluginsOnly = url.searchParams.get('plugins_only') === 'true';
+    noPlugins = url.searchParams.get('no_plugins') === 'true';
 
     const chParam = url.searchParams.get('channels');
     if (chParam) customChannels = chParam.split(',').map(s => s.trim()).filter(Boolean);
+
+    const plParam = url.searchParams.get('plugins');
+    if (plParam && plParam !== 'all') {
+      customPlugins = plParam.split(',').map(s => s.trim()).filter(Boolean);
+    }
 
     const typeParam = url.searchParams.get('cloud_types');
     if (typeParam)
@@ -270,11 +416,19 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
       keyword = body.kw || body.keyword || '';
       resultType = body.res || body.result_type || 'merge';
       forceRefresh = body.refresh === true || body.force_refresh === true;
+      pluginsOnly = body.plugins_only === true;
+      noPlugins = body.no_plugins === true;
 
       if (Array.isArray(body.channels)) {
         customChannels = body.channels.map((s: any) => String(s).trim()).filter(Boolean);
       } else if (typeof body.channels === 'string') {
         customChannels = body.channels.split(',').map((s: string) => s.trim()).filter(Boolean);
+      }
+
+      if (Array.isArray(body.plugins)) {
+        customPlugins = body.plugins.map((s: any) => String(s).trim()).filter(Boolean);
+      } else if (typeof body.plugins === 'string' && body.plugins !== 'all') {
+        customPlugins = body.plugins.split(',').map((s: string) => s.trim()).filter(Boolean);
       }
 
       if (Array.isArray(body.cloud_types)) {
@@ -306,6 +460,8 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
       targetChannels.push(name);
     }
     targetChannels = targetChannels.slice(0, MAX_CHANNELS_PER_CALL);
+  } else if (pluginsOnly) {
+    targetChannels = [];
   } else {
     // 未指定：按优先级取前 N 个（默认上限来自设置，且不超过单次调用预算）
     const cap = Math.max(
@@ -319,12 +475,34 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
       .map(c => c.name);
   }
 
-  if (targetChannels.length === 0) {
+  // ---------- 解析本次调用要使用的插件 ----------
+  // 关键约定：**只在「客户端显式指定了 channels」之外**才跑插件。
+  // 前端分片调度时会为每个分片都显式带上 channels，如果每个分片都触发插件调用，
+  // 一次搜索就会把插件打 18 遍；因此改成由前端单独发一次 plugins_only 请求。
+  const allEnabledPlugins = settings.plugins.filter(p => p.enabled && p.apiEndpoint);
+
+  let targetPlugins = allEnabledPlugins;
+  if (noPlugins) {
+    targetPlugins = [];
+  } else if (customPlugins.length > 0) {
+    const want = new Set(customPlugins.map(s => s.toLowerCase()));
+    targetPlugins = allEnabledPlugins.filter(
+      p => want.has(p.id.toLowerCase()) || want.has((p.name || '').toLowerCase())
+    );
+  } else if (customChannels.length > 0 && !pluginsOnly) {
+    // 频道分片请求：不带插件
+    targetPlugins = [];
+  }
+
+  const pluginCap = Math.max(1, settings.maxPluginsPerSearch || DEFAULT_MAX_PLUGINS);
+  targetPlugins = targetPlugins.slice(0, pluginCap);
+
+  if (targetChannels.length === 0 && targetPlugins.length === 0) {
     return formatSearchResponse(
       { total: 0, results: [], merged_by_type: {} },
       resultType,
       filterCloudTypes,
-      { channels_queried: 0, channels_ok: 0, from_cache: 0 }
+      { channels_queried: 0, channels_ok: 0, plugins_queried: 0, plugins_ok: 0, from_cache: 0 }
     );
   }
 
@@ -400,13 +578,105 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
     return items;
   };
 
-  const settled = await runWithConcurrency(
-    targetChannels.map(ch => () => loadChannel(ch)),
-    perChannelLimit
-  );
+  // ---------- 插件取数（与频道抓取并行，KV 缓存优先） ----------
+  // 插件背后是外部聚合节点，一次要跑 5~8 秒，所以：
+  //   ① 缓存 TTL 给到 30 分钟（频道结果只有 5 分钟）；
+  //   ② 并发上限压到 2，避免和频道抓取抢 Cloudflare 的 6 连接预算。
+  const pluginStats = { ok: 0, fromCache: 0, stale: 0, failed: 0 };
+
+  /**
+   * 缓存值结构：{ at: 写入时间戳, items: 结果 }。
+   * 兼容早期版本直接存数组的格式（视为「很旧的新鲜数据」）。
+   */
+  const readPluginCache = (raw: string): { at: number; items: SearchResultItem[] } | null => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return { at: 0, items: parsed as SearchResultItem[] };
+      if (parsed && Array.isArray(parsed.items)) {
+        return { at: Number(parsed.at) || 0, items: parsed.items as SearchResultItem[] };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const loadPlugin = async (plugin: PluginConfig): Promise<SearchResultItem[]> => {
+    const cacheKey = `${PLUGIN_CACHE_PREFIX}:${kwKey}:${plugin.id.toLowerCase()}`;
+
+    // 先读缓存。即便强制刷新，也要把它留作「刷新失败时的兜底」。
+    let cached: { at: number; items: SearchResultItem[] } | null = null;
+    if (env.PANSOU_KV) {
+      try {
+        const raw = await env.PANSOU_KV.get(cacheKey);
+        if (raw) cached = readPluginCache(raw);
+      } catch (e) {}
+    }
+
+    if (cached && cached.items.length > 0 && !forceRefresh) {
+      // 新鲜期内直接命中
+      if (Date.now() - cached.at < PLUGIN_CACHE_TTL * 1000) {
+        pluginStats.fromCache++;
+        return cached.items;
+      }
+    }
+
+    let items: SearchResultItem[] = [];
+    try {
+      items = await executePluginSearch(plugin, keyword, PER_PLUGIN_TIMEOUT_MS);
+    } catch (e) {
+      items = [];
+    }
+
+    if (items.length > 0) {
+      pluginStats.ok++;
+      if (env.PANSOU_KV) {
+        const value = JSON.stringify({ at: Date.now(), items });
+        ctx.waitUntil(
+          env.PANSOU_KV.put(cacheKey, value, { expirationTtl: PLUGIN_STALE_TTL }).catch(() => {})
+        );
+      }
+      return items;
+    }
+
+    // 本次没抓到 —— 优先返回过期缓存（stale-while-error），而不是给用户一个空结果
+    if (cached && cached.items.length > 0) {
+      pluginStats.stale++;
+      return cached.items;
+    }
+
+    pluginStats.failed++;
+
+    // 确实没数据（新关键词 + 节点被拦）：只做短缓存，尽快让后续请求再试
+    if (env.PANSOU_KV) {
+      ctx.waitUntil(
+        env.PANSOU_KV.put(cacheKey, JSON.stringify({ at: 0, items: [] }), {
+          expirationTtl: EMPTY_CACHE_TTL
+        }).catch(() => {})
+      );
+    }
+
+    return items;
+  };
+
+  const [settled, pluginSettled] = await Promise.all([
+    runWithConcurrency(
+      targetChannels.map(ch => () => loadChannel(ch)),
+      perChannelLimit
+    ),
+    runWithConcurrency(
+      targetPlugins.map(p => () => loadPlugin(p)),
+      Math.min(DEFAULT_MAX_PLUGINS, Math.max(1, targetPlugins.length))
+    )
+  ]);
 
   const rawResults: SearchResultItem[] = [];
   for (const res of settled) {
+    if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+      rawResults.push(...res.value);
+    }
+  }
+  for (const res of pluginSettled) {
     if (res.status === 'fulfilled' && Array.isArray(res.value)) {
       rawResults.push(...res.value);
     }
@@ -469,6 +739,13 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
   return formatSearchResponse(searchData, resultType, filterCloudTypes, {
     channels_queried: targetChannels.length,
     channels_ok: stats.ok,
+    plugins_queried: targetPlugins.length,
+    plugins_ok: pluginStats.ok,
+    plugins_from_cache: pluginStats.fromCache,
+    /** 节点被 WAF 拦、但用过期缓存兜底成功的插件数 */
+    plugins_stale: pluginStats.stale,
+    /** 彻底没拿到数据的插件数（新关键词 + 节点被拦） */
+    plugins_failed: pluginStats.failed,
     from_cache: stats.fromCache,
     elapsed_ms: Date.now() - startedAt
   });
@@ -545,14 +822,15 @@ function formatSearchResponse(
   return jsonResponse(responseObj);
 }
 
-function jsonResponse(data: any, status: number = 200): Response {
+function jsonResponse(data: any, status: number = 200, extraHeaders: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      ...extraHeaders
     }
   });
 }

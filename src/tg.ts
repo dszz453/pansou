@@ -1,4 +1,4 @@
-import { SearchResultItem, ExtractedLink } from './types';
+import { SearchResultItem } from './types';
 import {
   extractLinksAndPasswords,
   extractTags,
@@ -6,7 +6,8 @@ import {
   isTitleRelevant,
   isUnreliableTitle,
   pickKeywordLine,
-  contentMentions
+  contentMentions,
+  ContextualExtractedLink
 } from './parser';
 
 /** 抓取页面时通用的浏览器 UA */
@@ -175,7 +176,7 @@ export function filterItemsByKeyword(
     const keywordLine = pickKeywordLine(item.content, keyword);
     const globalTitleUsable = isTitleRelevant(item.title, keyword) && !isUnreliableTitle(item.title);
 
-    const kept: ExtractedLink[] = [];
+    const kept: ContextualExtractedLink[] = [];
     for (const link of item.links) {
       const lt = (link as any).contextTitle as string | undefined;
 
