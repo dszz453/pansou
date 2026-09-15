@@ -807,17 +807,30 @@ function formatSearchResponse(
     count += (finalMerged[k as CloudType] || []).length;
   }
 
-  const responseObj: any = { code: 0, message: 'success', total: count, _meta: meta };
+  // fish2018/pansou 的标准响应是 { code, message, data: {...} }，
+  // 真实数据（total / merged_by_type / results）必须放在 data 里。
+  // 第三方客户端（影视 App 爬虫源、MoonTVPlus 等）会直接读 response.data，
+  // 缺失该字段就会判定「数据格式不正确」并提取到 0 条链接。
+  const dataObj: any = { total: count, _meta: meta };
 
   if (resultType === 'merge' || resultType === 'merged_by_type') {
-    responseObj.merged_by_type = finalMerged;
+    dataObj.merged_by_type = finalMerged;
   } else if (resultType === 'results') {
-    responseObj.results = data.results || [];
+    dataObj.results = data.results || [];
   } else {
     // 默认 'all' 返回两者
-    responseObj.results = data.results || [];
-    responseObj.merged_by_type = finalMerged;
+    dataObj.results = data.results || [];
+    dataObj.merged_by_type = finalMerged;
   }
+
+  // ① 标准嵌套结构（第三方兼容的关键）
+  const responseObj: any = { code: 0, message: 'success', data: dataObj };
+
+  // ② 同时保留扁平字段，兼容按旧格式读取的调用方与内置前端
+  responseObj.total = count;
+  responseObj._meta = meta;
+  if (dataObj.merged_by_type) responseObj.merged_by_type = dataObj.merged_by_type;
+  if (dataObj.results) responseObj.results = dataObj.results;
 
   return jsonResponse(responseObj);
 }

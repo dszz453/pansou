@@ -350,47 +350,53 @@ Content-Type: application/json
 #### 响应示例：
 ```json
 {
-  "total": 12,
-  "results": [
-    {
-      "message_id": "1001",
-      "unique_id": "tg:tgsearchers2_1001",
-      "channel": "tg:tgsearchers2",
-      "datetime": "2024-03-20T12:00:00Z",
-      "title": "三体全集 4K 高码率",
-      "content": "三体全集 4K 高码率 国语中字...",
-      "links": [
-        {
-          "type": "quark",
-          "url": "https://pan.quark.cn/s/abcdefg",
-          "password": ""
-        }
-      ],
-      "tags": ["电视剧", "科幻"]
-    }
-  ],
-  "merged_by_type": {
-    "quark": [
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 12,
+    "results": [
       {
-        "url": "https://pan.quark.cn/s/abcdefg",
-        "password": "",
-        "note": "三体全集 4K 高码率",
+        "message_id": "1001",
+        "unique_id": "tg:tgsearchers2_1001",
+        "channel": "tg:tgsearchers2",
         "datetime": "2024-03-20T12:00:00Z",
-        "source": "tg:tgsearchers2"
+        "title": "三体全集 4K 高码率",
+        "content": "三体全集 4K 高码率 国语中字...",
+        "links": [
+          { "type": "quark", "url": "https://pan.quark.cn/s/abcdefg", "password": "" }
+        ],
+        "tags": ["电视剧", "科幻"]
       }
     ],
-    "aliyun": [
-      {
-        "url": "https://www.alipan.com/s/123456",
-        "password": "abcd",
-        "note": "三体 原著有声剧",
-        "datetime": "2024-03-19T10:00:00Z",
-        "source": "plugin:jikepan"
-      }
-    ]
+    "merged_by_type": {
+      "quark": [
+        {
+          "url": "https://pan.quark.cn/s/abcdefg",
+          "password": "",
+          "note": "三体全集 4K 高码率",
+          "datetime": "2024-03-20T12:00:00Z",
+          "source": "tg:tgsearchers2"
+        }
+      ],
+      "aliyun": [
+        {
+          "url": "https://www.alipan.com/s/123456",
+          "password": "abcd",
+          "note": "三体 原著有声剧",
+          "datetime": "2024-03-19T10:00:00Z",
+          "source": "plugin:jikepan"
+        }
+      ]
+    }
   }
 }
 ```
+
+> 📌 **对接第三方客户端（影视 App 爬虫源 / MoonTVPlus 等）必看**：
+> 真实数据在 **`data`** 里，这是 `fish2018/pansou` 的标准结构 `{ code, message, data }`。
+> 这些客户端会先判断 `response.data` 是否存在，取不到就会报「数据格式不正确」、提取到 **0 条**链接。
+> 为兼容早期调用方，顶层**同时保留**一份平铺的 `total` / `results` / `merged_by_type`（内容相同），
+> 代价是响应体会比只读 `data` 时大约一倍——新写的调用方请只用 `data`。
 
 ---
 
@@ -402,8 +408,15 @@ GET /api/health
 ```json
 {
   "status": "ok",
-  "channels": ["tgsearchers2", "yunpanqk", "share_aliyun"],
-  "plugins": ["极客盘搜 (Jikepan)", "趣盘搜 (QuPanSou)"],
-  "plugins_enabled": true
+  "engine": "native-tg+pansou-plugins",
+  "upstream_node": "https://your-node.example.com/api/search",
+  "kv_bound": true,
+  "channels_total": 143,
+  "channels_enabled": 143,
+  "plugins_total": 1,
+  "plugins_enabled": 1,
+  "max_channels_per_call": 10,
+  "max_plugins_per_call": 2,
+  "cache_ttl": 300
 }
 ```
