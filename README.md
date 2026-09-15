@@ -11,11 +11,9 @@
 | 项目 | 值 |
 | :--- | :--- |
 | **源码仓库** | [github.com/dszz453/pansou](https://github.com/dszz453/pansou) |
-| **自定义域名（直连）** | [https://pansou.dszz.qzz.io](https://pansou.dszz.qzz.io)（国内可直连） |
-| **备用域名** | [https://newpansou.dszz.qzz.io](https://newpansou.dszz.qzz.io) |
-| **Workers.dev 域名** | [https://pansou.account-a496b2cd4f40a5119f3b860243c4e028.workers.dev](https://pansou.account-a496b2cd4f40a5119f3b860243c4e028.workers.dev) |
+| **部署地址** | 已在 Cloudflare Workers 上线（自定义域名请按 [部署指南](#-部署指南) 自行绑定） |
 | **后台管理** | 首页右上角「管理后台」，默认密码 `admin` |
-| **KV 绑定** | `PANSOU_KV` = `f7ce13fbd0e344bebe060a64c94af64f` |
+| **KV 绑定** | 变量名 `PANSOU_KV`，命名空间 ID 使用你自己的 |
 | **网盘支持** | 百度、阿里、夸克、光鸭、天翼、UC、迅雷、移动、115、123、PikPak、磁力、电驴等 15 类 |
 | **内置资源池** | 143 个 Telegram 网盘频道（全部启用） + 1 个聚合节点插件（内含 89 个子插件源） |
 | **批量导入** | 后台支持多行文本/逗号/JSON 批量导入，自动剔除 @/URL 前缀与智能识别 |
@@ -153,20 +151,20 @@ node reset_settings.mjs <API_TOKEN> <ACCOUNT_ID> <KV_NAMESPACE_ID>
 ### 端到端搜索验证
 
 ```bash
-# 默认验证 us.ci 站点
+# 默认验证本地预览站点（先运行 node serve-local.mjs）
 node verify_full.mjs 庆余年 流浪地球 繁花
 
 # 指定任意站点
-BASE=https://pansou.dszz.qzz.io node verify_full.mjs 庆余年
+BASE=https://<你的域名> node verify_full.mjs 庆余年
 
 # 单站点四项全查（页面 / 健康 / 插件 / 搜索）
-node final_check.mjs https://pansou.dszz.us.ci
+node final_check.mjs https://<你的域名>
 
 # 量化插件带来的增量（纯频道 / 纯插件 / 合并 三档对比）
 node compare_plugins.mjs 流浪地球 庆余年
 
 # 验证插件「过期缓存兜底」是否生效（连续强制刷新，看是否出现空结果）
-node verify_plugin_stale.mjs 奥本海默 https://pansou.dszz.us.ci 10
+node verify_plugin_stale.mjs 奥本海默 https://<你的域名> 10
 ```
 
 `verify_full.mjs` 会模拟前端的「8 频道/片 × 4 路并发」调度跑满全量频道，输出每个关键词的结果总数、耗时与网盘分布。
@@ -252,12 +250,12 @@ curl "https://你的域名/api/debug/plugin?kw=流浪地球&rounds=3"
 
 Windows（双击或在命令行执行）：
 ```bat
-deploy.bat <你的_API_TOKEN> a496b2cd4f40a5119f3b860243c4e028
+deploy.bat <你的_API_TOKEN> <你的_ACCOUNT_ID>
 ```
 
 macOS / Linux / Git Bash：
 ```bash
-node deploy.mjs <你的_API_TOKEN> a496b2cd4f40a5119f3b860243c4e028
+node deploy.mjs <你的_API_TOKEN> <你的_ACCOUNT_ID>
 ```
 
 脚本会自动完成：构建 → 创建/复用 `PANSOU_KV` → 上传 Worker → 绑定变量 → 开启公网访问 → 打印访问地址。
@@ -266,7 +264,7 @@ node deploy.mjs <你的_API_TOKEN> a496b2cd4f40a5119f3b860243c4e028
 
 部署完成后输出形如：
 ```
-站点首页 : https://pansou.account-a496b2cd4f40a5119f3b860243c4e028.workers.dev
+站点首页 : https://<worker名称>.<你的子域>.workers.dev
 后台管理 : 右上角「管理后台」按钮，默认密码 admin
 ```
 

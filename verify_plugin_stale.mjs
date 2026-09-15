@@ -1,10 +1,11 @@
 /**
  * 验证插件的「过期缓存兜底」：用全新关键词连续强制刷新，
  * 只要中途成功过一次，后续即便节点被 WAF 拦，也应该返回旧数据而不是 0 条。
- * 用法: node verify_plugin_stale.mjs <关键词> <域名> [次数]
+ * 用法: node verify_plugin_stale.mjs <关键词> [域名] [次数]
+ * 未指定域名时默认验证本地预览（node serve-local.mjs）。
  */
 const kw = process.argv[2] || '星际穿越';
-const BASE = process.argv[3] || 'https://pansou.dszz.qzz.io';
+const BASE = process.argv[3] || process.env.BASE || 'http://127.0.0.1:8787';
 const rounds = Number(process.argv[4] || 8);
 
 const call = async () => {

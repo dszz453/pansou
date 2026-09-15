@@ -1,8 +1,9 @@
 /**
  * 最终端到端验收：页面 / 接口 / 插件 / 搜索 四项全查。
  * 用法: node final_check.mjs <域名>
+ * 未指定域名时默认验证本地预览（node serve-local.mjs）。
  */
-const BASE = process.argv[2] || 'https://pansou.dszz.us.ci';
+const BASE = process.argv[2] || process.env.BASE || 'http://127.0.0.1:8787';
 
 /** 带重试的取数（沙箱代理对部分域名间歇性失败） */
 const get = async (path, opt = {}, tries = 6) => {

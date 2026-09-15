@@ -1,8 +1,9 @@
 /**
  * 对比「纯频道」「纯插件」「合并」三种模式的结果，量化插件增益。
- * 用法: BASE=https://域名 node compare_plugins.mjs <关键词...>
+ * 用法: BASE=https://<你的域名> node compare_plugins.mjs <关键词...>
+ * 未指定 BASE 时默认验证本地预览（node serve-local.mjs）。
  */
-const BASE = process.env.BASE || 'https://pansou.dszz.us.ci';
+const BASE = process.env.BASE || 'http://127.0.0.1:8787';
 const kws = process.argv.slice(2);
 if (kws.length === 0) kws.push('流浪地球');
 
