@@ -2,18 +2,22 @@
 
 参考 [fish2018/pansou-web](https://github.com/fish2018/pansou-web) 与 [panhub.shenzjd.com](https://github.com/wu529778790/panhub.shenzjd.com) 架构设计，基于 **Cloudflare Workers** 边缘无服务器环境开发的高性能网盘聚合搜索工具。
 
+> 📦 **源码仓库**：<https://github.com/dszz453/pansou>
+
 ---
 
 ## 🎉 部署状态：已上线
 
 | 项目 | 值 |
 | :--- | :--- |
+| **源码仓库** | [github.com/dszz453/pansou](https://github.com/dszz453/pansou) |
 | **自定义域名（直连）** | [https://pansou.dszz.qzz.io](https://pansou.dszz.qzz.io)（国内可直连） |
+| **备用域名** | [https://newpansou.dszz.qzz.io](https://newpansou.dszz.qzz.io) |
 | **Workers.dev 域名** | [https://pansou.account-a496b2cd4f40a5119f3b860243c4e028.workers.dev](https://pansou.account-a496b2cd4f40a5119f3b860243c4e028.workers.dev) |
 | **后台管理** | 首页右上角「管理后台」，默认密码 `admin` |
 | **KV 绑定** | `PANSOU_KV` = `f7ce13fbd0e344bebe060a64c94af64f` |
 | **网盘支持** | 百度、阿里、夸克、光鸭、天翼、UC、迅雷、移动、115、123、PikPak、磁力、电驴等 15 类 |
-| **内置资源池** | 128 个优质 Telegram 网盘频道 + 80 个搜索插件预设库 |
+| **内置资源池** | 143 个优质 Telegram 网盘频道 + 搜索插件预设库 |
 | **批量导入** | 后台支持多行文本/逗号/JSON 批量导入，自动剔除 @/URL 前缀与智能识别 |
 
 > ⚠️ **国内网络提醒**：`*.workers.dev` 在中国大陆被 DNS 污染（解析到 `103.73.161.52`），直连会失败。
@@ -42,20 +46,71 @@
 │   ├── parser.ts       # 智能网盘 URL / 提取码 / 标题标签解析器
 │   ├── tg.ts           # Telegram 公开频道内容抓取与 HTML 解析
 │   ├── admin.ts        # 系统配置与 KV 存储管理模块
-│   ├── plugins/
-│   │   └── index.ts    # 插件引擎：pansou 兼容节点 + 任意 REST API（字段映射）
+│   ├── defaults.ts     # 内置 143 个 TG 网盘频道默认配置
+│   ├── icons.ts        # 内联 SVG 图标（零外部图标库依赖）
+│   ├── tailwind-input.css  # Tailwind 入口（预编译为 vendor/tailwind.css）
 │   └── ui.html.ts      # 内置前端 Vue 3 + Tailwind 单页界面
-├── dist/worker.js      # 构建产物（自包含，可直接粘贴到 CF 控制台）
+├── vendor/             # 同源自托管前端资源（Vue 3 / 预编译 Tailwind）
+├── .github/workflows/deploy.yml   # GitHub Actions 一键部署流水线
+├── build.mjs           # 构建脚本（含内联脚本语法护栏）
 ├── deploy.mjs          # 一键部署脚本（跨平台）
 ├── deploy.bat          # 一键部署脚本（Windows）
+├── fetch-vendor.mjs    # 拉取 Vue 3 到 vendor/（离线自托管用）
 ├── serve-local.mjs     # 本地预览服务器（国内网络下预览界面用）
 ├── smoke-test.mjs      # 路由与接口冒烟测试
 ├── search-test.mjs     # 真实联网搜索测试
+├── test_parser.mjs     # 解析器单元测试
+├── verify_full.mjs     # 143 频道端到端分片搜索验证
 ├── wrangler.toml       # Cloudflare Worker 配置文件
 ├── package.json        # 依赖与编译脚本
 ├── tsconfig.json       # TypeScript 编译配置
 └── README.md           # 部署与使用文档
 ```
+
+---
+
+## 🤖 自动化部署（GitHub Actions）
+
+仓库内置 `.github/workflows/deploy.yml`，可在 GitHub 网页上**一键触发部署**，无需本地环境：
+
+1. 进入仓库 **Settings → Secrets and variables → Actions**，新增两个 Secret：
+
+   | Secret 名称 | 值 |
+   | :--- | :--- |
+   | `CF_API_TOKEN` | Cloudflare API Token（需 Workers Scripts: Edit、Workers KV Storage: Edit） |
+   | `CF_ACCOUNT_ID` | Cloudflare 账户 ID |
+
+2. 进入 **Actions → Deploy to Cloudflare Workers → Run workflow**，点击运行即可。
+
+> 该流水线默认**仅支持手动触发**，避免未配置 Secret 时每次推送都产生一条失败的运行记录。
+> 若希望「推送 main 分支即自动部署」，把 `deploy.yml` 里 `push:` 触发器的注释取消即可。
+
+---
+
+## ⚠️ 两个必须知道的坑
+
+### 1️⃣ `src/ui.html.ts` 里写内联 JS，反斜杠必须双写
+
+`ui.html.ts` 导出的是**普通模板字符串**，里面的反斜杠会被模板字符串先解析一层：
+
+| 源码里写 | 实际渲染成 | 后果 |
+| :--- | :--- | :--- |
+| `\/` | `/` | `/^https?://t.me/(s/)?/` → **非法正则** |
+| `\n` | 真实换行 | 字符串被折断 → **语法错误** |
+| `\.` `\d` `\s` | `.` `d` `s` | 正则语义全错 |
+
+正确写法是 `\\/`、`\\n`、`\\.`（而 `` \` `` 和 `\${` 保持单反斜杠）。
+
+**一旦出错**：整个 `<script>` 解析失败 → `createApp().mount('#app')` 永不执行 →
+`v-cloak` 不解除、所有 `v-if` 弹窗以静态 HTML 常驻并铺满屏幕、按钮全是没绑定的死标签。
+换浏览器、换域名、清缓存都没用，因为**代码本身就是坏的**。
+
+**已加护栏**：`node build.mjs` 每次都会把内联脚本抽出来跑 `new Function()` 语法校验，不通过直接失败。
+
+### 2️⃣ `*.workers.dev` 在国内被 DNS 污染
+
+`*.workers.dev` 在中国大陆解析被污染，直连一定失败。
+**必须在 Cloudflare 为该 Worker 绑定自有域名**（Workers → Settings → Domains & Routes → Add Custom Domain）。
 
 ---
 

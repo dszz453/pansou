@@ -40,6 +40,11 @@ vendor/tailwind.js
 
 # 临时调试 / 测试产物
 *.log
+asset_*.js
+asset_*.css
+final_*.html
+q_*.html
+res_*.json
 tg_*.html
 feed_*.html
 live_*.html
