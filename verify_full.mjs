@@ -1,8 +1,9 @@
 /**
  * 端到端验证：模拟前端「分片并发」调度，跑全量 143 个频道
  * 用法: node verify_full.mjs <关键词...>
+ *       BASE=https://your.domain node verify_full.mjs <关键词...>
  */
-const BASE = 'https://pansou.dszz.us.ci';
+const BASE = process.env.BASE || 'https://pansou.dszz.us.ci';
 const CONCURRENCY = 4;
 
 const keywords = process.argv.slice(2);

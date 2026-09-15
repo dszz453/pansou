@@ -55,12 +55,13 @@
 ├── build.mjs           # 构建脚本（含内联脚本语法护栏）
 ├── deploy.mjs          # 一键部署脚本（跨平台）
 ├── deploy.bat          # 一键部署脚本（Windows）
+├── reset_settings.mjs  # 重置 KV 系统设置（全量启用 143 频道 / 清除废弃插件）
 ├── fetch-vendor.mjs    # 拉取 Vue 3 到 vendor/（离线自托管用）
 ├── serve-local.mjs     # 本地预览服务器（国内网络下预览界面用）
 ├── smoke-test.mjs      # 路由与接口冒烟测试
 ├── search-test.mjs     # 真实联网搜索测试
 ├── test_parser.mjs     # 解析器单元测试
-├── verify_full.mjs     # 143 频道端到端分片搜索验证
+├── verify_full.mjs     # 143 频道端到端分片搜索验证（BASE=域名 可指定站点）
 ├── wrangler.toml       # Cloudflare Worker 配置文件
 ├── package.json        # 依赖与编译脚本
 ├── tsconfig.json       # TypeScript 编译配置
@@ -111,6 +112,46 @@
 
 `*.workers.dev` 在中国大陆解析被污染，直连一定失败。
 **必须在 Cloudflare 为该 Worker 绑定自有域名**（Workers → Settings → Domains & Routes → Add Custom Domain）。
+
+---
+
+## 🔧 运维：检查与重置频道配置
+
+系统设置保存在 KV 的 `pansou_system_settings` 键中。**如果这个键存在但只启用了部分频道，搜索覆盖会明显变少。**
+
+### 检查当前生效的频道数
+
+```bash
+curl https://你的域名/api/health
+# {"status":"ok",...,"channels_total":143,"channels_enabled":143,...}
+```
+
+`channels_enabled` 应等于 `channels_total`（143）。若小于 143，说明 KV 里存着一份旧的、部分禁用的配置。
+
+### 一键重置为全量启用
+
+```bash
+node reset_settings.mjs <API_TOKEN> <ACCOUNT_ID> <KV_NAMESPACE_ID>
+```
+
+脚本会：
+- 把全部 **143 个频道**重置为启用（前 24 个为高优先级，首批检索并立即渲染）
+- 删除已废弃的第三方聚合节点 `plugins` 字段（代码中已无插件引擎）
+- 保留原有的 `adminPassword` 与 `hotSearches`
+
+> 也可以直接在后台「管理 → 恢复出厂配置」达到同样效果。
+
+### 端到端搜索验证
+
+```bash
+# 默认验证 us.ci 站点
+node verify_full.mjs 庆余年 流浪地球 繁花
+
+# 指定任意站点
+BASE=https://pansou.dszz.qzz.io node verify_full.mjs 庆余年
+```
+
+会模拟前端的「8 频道/片 × 4 路并发」调度跑满全量频道，输出每个关键词的结果总数、耗时与网盘分布。
 
 ---
 

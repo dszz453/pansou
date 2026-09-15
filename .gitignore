@@ -9,6 +9,7 @@ src/vendor.generated.ts
 
 # 一次性调试 / 探针脚本（保留在本地，不入库）
 build_tgtest.mjs
+build_defaults.mjs
 call_ocr.js
 check-and-clean.js
 check_tools.py
@@ -44,6 +45,8 @@ asset_*.js
 asset_*.css
 final_*.html
 q_*.html
+q_*.json
+np.json
 res_*.json
 tg_*.html
 feed_*.html
