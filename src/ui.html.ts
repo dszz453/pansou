@@ -13,98 +13,117 @@ export const HTML_TEMPLATE = `<!DOCTYPE html>
   <style>
 ${ICONS_CSS}
     .glass {
-      background: rgba(255, 255, 255, 0.85);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
     }
-    .badge-aliyun { background-color: #ff6a00; color: white; }
-    .badge-quark { background-color: #2b77ef; color: white; }
-    .badge-baidu { background-color: #2932e1; color: white; }
-    .badge-tianyi { background-color: #e60012; color: white; }
-    .badge-uc { background-color: #ff8c00; color: white; }
-    .badge-115 { background-color: #1980ff; color: white; }
-    .badge-xunlei { background-color: #0c82ff; color: white; }
-    .badge-123 { background-color: #07c160; color: white; }
-    .badge-guangya { background-color: #d97706; color: white; }
-    .badge-mobile { background-color: #0284c7; color: white; }
-    .badge-pikpak { background-color: #3b82f6; color: white; }
-    .badge-magnet { background-color: #7b1fa2; color: white; }
-    .badge-ed2k { background-color: #6366f1; color: white; }
-    .badge-google { background-color: #ea4335; color: white; }
-    .badge-others { background-color: #64748b; color: white; }
-    .badge-other { background-color: #64748b; color: white; }
+    .badge-aliyun { background: linear-gradient(135deg, #ff6a00, #ff8533); color: white; }
+    .badge-quark { background: linear-gradient(135deg, #2563eb, #3b82f6); color: white; }
+    .badge-baidu { background: linear-gradient(135deg, #1d4ed8, #2563eb); color: white; }
+    .badge-tianyi { background: linear-gradient(135deg, #dc2626, #ef4444); color: white; }
+    .badge-uc { background: linear-gradient(135deg, #ea580c, #f97316); color: white; }
+    .badge-115 { background: linear-gradient(135deg, #0284c7, #38bdf8); color: white; }
+    .badge-xunlei { background: linear-gradient(135deg, #0369a1, #0ea5e9); color: white; }
+    .badge-123 { background: linear-gradient(135deg, #059669, #10b981); color: white; }
+    .badge-guangya { background: linear-gradient(135deg, #d97706, #f59e0b); color: white; }
+    .badge-mobile { background: linear-gradient(135deg, #0891b2, #06b6d4); color: white; }
+    .badge-pikpak { background: linear-gradient(135deg, #4f46e5, #6366f1); color: white; }
+    .badge-magnet { background: linear-gradient(135deg, #7c3aed, #8b5cf6); color: white; }
+    .badge-ed2k { background: linear-gradient(135deg, #9333ea, #a855f7); color: white; }
+    .badge-google { background: linear-gradient(135deg, #ea4335, #f87171); color: white; }
+    .badge-others { background: linear-gradient(135deg, #64748b, #94a3b8); color: white; }
+    .badge-other { background: linear-gradient(135deg, #64748b, #94a3b8); color: white; }
+
+    .card-hover-effect {
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .card-hover-effect:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.03);
+    }
+
+    /* 状态指示胶囊 */
+    .status-valid { background-color: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+    .status-invalid { background-color: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .status-unknown { background-color: #f8fafc; color: #64748b; border-color: #e2e8f0; }
+    .status-checking { background-color: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+
     [v-cloak] { display: none; }
   </style>
   <script src="/assets/vue.js?v=${VENDOR_VERSION}"></script>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans transition-colors duration-200">
+<body class="bg-gradient-to-b from-slate-50 via-slate-50 to-slate-100/60 text-slate-800 min-h-screen flex flex-col font-sans antialiased">
   <div id="app" v-cloak class="flex flex-col min-h-screen">
     <!-- 顶栏导航 -->
-    <header class="border-b border-slate-200 bg-white/70 sticky top-0 z-40 backdrop-blur">
+    <header class="border-b border-slate-200/80 bg-white/80 sticky top-0 z-40 backdrop-blur-md">
       <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
-        <div class="flex items-center space-x-3 cursor-pointer" @click="resetToHome">
-          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white font-bold text-xl shadow-lg shadow-blue-500/30">
+        <div class="flex items-center space-x-3 cursor-pointer group" @click="resetToHome">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-indigo-500 flex items-center justify-center text-white font-bold text-lg shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
             <i class="fa-solid fa-bolt"></i>
           </div>
           <div>
-            <h1 class="font-bold text-lg leading-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">PanSou Edge</h1>
-            <p class="text-xs text-slate-500">Cloudflare 极速全网盘聚合</p>
+            <div class="flex items-center space-x-2">
+              <h1 class="font-bold text-lg leading-tight bg-gradient-to-r from-blue-600 via-indigo-600 to-indigo-700 bg-clip-text text-transparent">PanSou Edge</h1>
+              <span class="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-100/60">Edge</span>
+            </div>
+            <p class="text-[11px] text-slate-400">极速全网盘聚合 · 智能失效检测</p>
           </div>
         </div>
 
         <div class="flex items-center space-x-2">
-          <button @click="showApiModal = true" class="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-blue-600 hover:bg-slate-100 rounded-lg transition">
-            <i class="fa-solid fa-code mr-1"></i> API 接口
+          <button @click="showApiModal = true" class="px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-blue-600 hover:bg-slate-100/80 rounded-lg transition flex items-center space-x-1">
+            <i class="fa-solid fa-code"></i>
+            <span>API 接口</span>
           </button>
-          <button @click="openAdmin" class="px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition">
-            <i class="fa-solid fa-sliders mr-1"></i> 管理后台
+          <button @click="openAdmin" class="px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100/80 rounded-lg transition flex items-center space-x-1">
+            <i class="fa-solid fa-sliders"></i>
+            <span>管理后台</span>
           </button>
         </div>
       </div>
     </header>
 
     <!-- 主搜索内容区 -->
-    <main class="flex-1 max-w-5xl w-full mx-auto px-4 py-8">
+    <main class="flex-1 max-w-6xl w-full mx-auto px-4 py-8">
       <!-- 搜索框区域 -->
-      <div class="text-center mb-8 pt-4">
+      <div class="text-center mb-8 pt-2 sm:pt-4">
         <h2 class="text-3xl font-extrabold text-slate-900 tracking-tight sm:text-4xl mb-3">
           搜你想搜，即刻触达
         </h2>
-        <p class="text-slate-500 max-w-xl mx-auto text-sm">
-          原生并发抓取 143 个 Telegram 公开频道，支持百度、阿里、夸克、UC、光鸭、天翼、迅雷、123、115、PikPak、移动等全网盘
+        <p class="text-slate-500 max-w-xl mx-auto text-xs sm:text-sm">
+          原生并发抓取 Telegram 公开频道与聚合插件，支持阿里、夸克、百度、UC、天翼、迅雷、123 等 15+ 类主流网盘
         </p>
 
         <!-- 搜索表单 -->
-        <div class="mt-8 max-w-2xl mx-auto">
-          <form @submit.prevent="doSearch" class="relative flex items-center">
+        <div class="mt-7 max-w-2xl mx-auto">
+          <form @submit.prevent="doSearch" class="relative flex items-center shadow-lg shadow-slate-200/50 rounded-2xl">
             <input
               type="text"
               v-model="keyword"
-              placeholder="输入电影、电视剧、动漫、课程、软件或小说名称..."
-              class="w-full pl-12 pr-28 py-4 bg-white border-2 border-slate-200 rounded-2xl shadow-sm hover:border-blue-400 focus:border-blue-600 focus:ring-4 focus:ring-blue-100 focus:outline-none text-base transition-all"
-              autofocus
+              placeholder="搜索电影、剧集、动漫、电子书、音乐、游戏、无损音频..."
+              class="w-full px-5 py-3.5 pr-28 text-sm sm:text-base rounded-2xl border-2 border-slate-200 bg-white focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition placeholder-slate-400"
             />
-            <div class="absolute left-4 text-slate-400">
-              <i class="fa-solid fa-magnifying-glass text-lg"></i>
-            </div>
             <button
               type="submit"
               :disabled="loading"
-              class="absolute right-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shadow-md transition-all flex items-center disabled:opacity-50"
+              class="absolute right-1.5 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium text-sm rounded-xl transition shadow-md shadow-blue-500/20 disabled:opacity-50 flex items-center space-x-1.5"
             >
-              <i v-if="loading" class="fa-solid fa-circle-notch fa-spin mr-2"></i>
-              <span>{{ loading ? '搜索中' : '搜索' }}</span>
+              <i v-if="loading" class="fa-solid fa-circle-notch fa-spin"></i>
+              <i v-else class="fa-solid fa-magnifying-glass"></i>
+              <span>{{ loading ? '检索中' : '搜索' }}</span>
             </button>
           </form>
 
           <!-- 热门搜索推荐 -->
-          <div class="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-slate-500">
-            <span class="font-medium text-slate-400"><i class="fa-solid fa-fire text-amber-500 mr-1"></i>大家都在搜:</span>
+          <div class="mt-4 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 text-xs text-slate-500">
+            <span class="font-medium text-slate-400 flex items-center">
+              <i class="fa-solid fa-fire text-amber-500 mr-1"></i>大家都在搜:
+            </span>
             <span
               v-for="tag in hotSearches"
               :key="tag"
               @click="quickSearch(tag)"
-              class="cursor-pointer bg-slate-100 hover:bg-blue-50 hover:text-blue-600 px-2.5 py-1 rounded-full transition"
+              class="cursor-pointer bg-white hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200 border border-slate-200/60 px-2.5 py-1 rounded-full transition shadow-2xs text-[11px] sm:text-xs"
             >
               {{ tag }}
             </span>
@@ -112,105 +131,185 @@ ${ICONS_CSS}
         </div>
       </div>
 
-      <!-- 检索进度 -->
-      <div v-if="searched && loading" class="mt-6 flex items-center justify-center space-x-3 text-xs text-slate-500">
-        <i class="fa-solid fa-circle-notch fa-spin text-blue-600"></i>
-        <span>
-          正在检索 Telegram 频道
-          <strong class="text-slate-700">{{ searchProgress.done }}</strong>
-          /
-          <strong class="text-slate-700">{{ searchProgress.total }}</strong>
-          个分片<span v-if="totalCount > 0">，已找到 <strong class="text-blue-600">{{ totalCount }}</strong> 条结果</span>
-        </span>
-        <div class="w-32 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-          <div
-            class="h-full bg-blue-600 transition-all duration-300"
-            :style="{ width: searchProgress.total ? (searchProgress.done / searchProgress.total * 100) + '%' : '0%' }"
-          ></div>
+      <!-- 检索进度与状态 -->
+      <div v-if="searched && loading" class="mt-6 flex flex-col sm:flex-row items-center justify-center gap-3 text-xs text-slate-500 bg-white p-3 rounded-xl border border-slate-200/60 shadow-2xs max-w-xl mx-auto">
+        <div class="flex items-center space-x-2">
+          <i class="fa-solid fa-circle-notch fa-spin text-blue-600"></i>
+          <span>
+            正在检索多路频道与插件源
+            <strong class="text-slate-700">{{ searchProgress.done }}</strong>
+            /
+            <strong class="text-slate-700">{{ searchProgress.total }}</strong>
+          </span>
+        </div>
+        <div class="flex items-center space-x-2">
+          <div class="w-32 h-1.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
+            <div
+              class="h-full bg-blue-600 transition-all duration-300"
+              :style="{ width: searchProgress.total ? (searchProgress.done / searchProgress.total * 100) + '%' : '0%' }"
+            ></div>
+          </div>
+          <span v-if="totalCount > 0" class="text-blue-600 font-semibold">已汇总 {{ totalCount }} 条</span>
         </div>
       </div>
 
       <!-- 搜索结果区 -->
-      <div v-if="searched" class="mt-6">
-        <!-- 分类切换 Tabs -->
-        <div class="flex items-center justify-between border-b border-slate-200 pb-3 mb-6 overflow-x-auto">
-          <div class="flex space-x-2">
+      <div v-if="searched" class="mt-8">
+        <!-- 分类切换 Tabs & 工具条 -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200/80 pb-3 mb-6 gap-3">
+          <!-- 左侧网盘分类 Tab -->
+          <div class="flex items-center space-x-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
             <button
               @click="activeTab = 'all'"
-              :class="activeTab === 'all' ? 'bg-blue-600 text-white font-semibold' : 'bg-white text-slate-600 hover:bg-slate-100'"
-              class="px-4 py-2 rounded-xl text-sm transition shadow-sm whitespace-nowrap"
+              :class="activeTab === 'all' ? 'bg-blue-600 text-white font-semibold shadow-sm shadow-blue-500/20' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'"
+              class="px-3.5 py-1.5 rounded-xl text-xs sm:text-sm transition whitespace-nowrap flex items-center space-x-1.5"
             >
-              全部结果 ({{ totalCount }})
+              <span>全部</span>
+              <span class="text-[10px] px-1.5 py-0.2 rounded-full" :class="activeTab === 'all' ? 'bg-white/20' : 'bg-slate-100 text-slate-500'">
+                {{ totalCount }}
+              </span>
             </button>
             <button
               v-for="(items, type) in mergedResults"
               :key="type"
               @click="activeTab = type"
-              :class="activeTab === type ? 'bg-blue-600 text-white font-semibold' : 'bg-white text-slate-600 hover:bg-slate-100'"
-              class="px-3.5 py-2 rounded-xl text-sm transition shadow-sm flex items-center space-x-1.5 whitespace-nowrap"
+              :class="activeTab === type ? 'bg-blue-600 text-white font-semibold shadow-sm shadow-blue-500/20' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'"
+              class="px-3 py-1.5 rounded-xl text-xs sm:text-sm transition flex items-center space-x-1.5 whitespace-nowrap"
             >
               <span>{{ getCloudLabel(type) }}</span>
-              <span class="text-xs opacity-80 px-1.5 py-0.5 rounded-full bg-black/10">
+              <span class="text-[10px] px-1.5 py-0.2 rounded-full" :class="activeTab === type ? 'bg-white/20' : 'bg-slate-100 text-slate-500'">
                 {{ items.length }}
               </span>
             </button>
           </div>
 
-          <div class="text-xs text-slate-400 hidden sm:block">
-            找到 <strong class="text-slate-700">{{ currentList.length }}</strong> 条资源
+          <!-- 右侧工具条（过滤 / 批量检测） -->
+          <div class="flex items-center justify-between sm:justify-end space-x-3 text-xs text-slate-500">
+            <!-- 仅显示有效筛选 -->
+            <label v-if="hasCheckedAny" class="flex items-center space-x-1 cursor-pointer select-none text-slate-600 hover:text-blue-600">
+              <input type="checkbox" v-model="filterValidOnly" class="rounded text-blue-600 focus:ring-0">
+              <span>只看有效 ({{ validOnlyCount }})</span>
+            </label>
+
+            <!-- 批量一键检测按钮 -->
+            <button
+              @click="batchCheckCurrent"
+              :disabled="batchChecking"
+              class="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-600 border border-slate-200/80 rounded-lg transition flex items-center space-x-1 font-medium disabled:opacity-50"
+              title="自动检测当前分类下所有网盘链接是否失效"
+            >
+              <i class="fa-solid" :class="batchChecking ? 'fa-circle-notch fa-spin text-blue-600' : 'fa-stethoscope text-emerald-600'"></i>
+              <span>{{ batchChecking ? '检测中...' : '检测本页有效性' }}</span>
+            </button>
+
+            <span class="text-slate-400 hidden md:inline">共 {{ displayedList.length }} 条</span>
           </div>
         </div>
 
-        <!-- 列表内容 -->
-        <div v-if="currentList.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- 结果卡片网格 -->
+        <div v-if="displayedList.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div
-            v-for="(item, idx) in currentList"
+            v-for="(item, idx) in displayedList"
             :key="idx"
-            class="bg-white p-5 rounded-2xl border border-slate-200/80 hover:border-blue-400 hover:shadow-lg transition-all flex flex-col justify-between"
+            class="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 card-hover-effect flex flex-col justify-between"
           >
             <div>
-              <div class="flex items-start justify-between gap-2 mb-2">
-                <span
-                  class="text-xs font-semibold px-2.5 py-1 rounded-lg"
-                  :class="'badge-' + (item.cloudType || activeTab)"
-                >
-                  {{ getCloudLabel(item.cloudType || activeTab) }}
+              <!-- 顶部标签与时间 -->
+              <div class="flex items-center justify-between gap-2 mb-2.5">
+                <div class="flex items-center space-x-1.5">
+                  <span
+                    class="text-[11px] font-semibold px-2.5 py-0.5 rounded-md shadow-2xs"
+                    :class="'badge-' + (item.cloudType || activeTab)"
+                  >
+                    {{ getCloudLabel(item.cloudType || activeTab) }}
+                  </span>
+
+                  <!-- 失效状态徽标 -->
+                  <span
+                    v-if="itemStatusMap[item.url]"
+                    class="text-[10px] font-medium px-2 py-0.5 rounded-md border flex items-center space-x-1"
+                    :class="getStatusClass(itemStatusMap[item.url].status)"
+                  >
+                    <i class="fa-solid text-[9px]" :class="getStatusIcon(itemStatusMap[item.url].status)"></i>
+                    <span>{{ itemStatusMap[item.url].label }}</span>
+                  </span>
+                </div>
+
+                <span class="text-[11px] text-slate-400 flex items-center">
+                  <i class="fa-regular fa-clock mr-1 text-[10px]"></i>
+                  {{ formatDateTime(item.datetime) }}
                 </span>
-                <span class="text-xs text-slate-400">{{ item.datetime || '刚刚' }}</span>
               </div>
-              <h3 class="text-base font-semibold text-slate-900 line-clamp-2 hover:text-blue-600 transition">
+
+              <!-- 资源标题 -->
+              <h3 class="text-sm sm:text-base font-semibold text-slate-800 line-clamp-2 hover:text-blue-600 transition leading-snug">
                 <a :href="item.url" target="_blank" rel="noopener noreferrer">
                   {{ item.note || item.title || '网盘分享链接' }}
                 </a>
               </h3>
             </div>
 
+            <!-- 底部来源与操作按钮 -->
             <div class="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-              <div class="flex items-center space-x-2 text-slate-500 truncate max-w-[60%]">
-                <i class="fa-solid fa-cloud"></i>
-                <span class="truncate">{{ item.source || 'TG 频道' }}</span>
+              <!-- 来源渠道 -->
+              <div class="flex items-center space-x-1.5 text-slate-400 truncate max-w-[45%]" :title="item.source || 'TG 频道'">
+                <i class="fa-solid fa-bullhorn text-slate-300 text-[11px]"></i>
+                <span class="truncate text-[11px] text-slate-500">{{ item.source || 'TG 频道' }}</span>
               </div>
 
+              <!-- 右侧操作区：提取码 + 检测 + 直达 -->
               <div class="flex items-center space-x-2">
-                <span v-if="item.password" class="bg-amber-50 text-amber-700 font-mono font-medium px-2 py-1 rounded border border-amber-200">
-                  提取码: {{ item.password }}
+                <!-- 提取码 -->
+                <span
+                  v-if="item.password"
+                  @click="copyText(item.password, '提取码已复制')"
+                  class="cursor-pointer bg-amber-50 hover:bg-amber-100 text-amber-700 font-mono font-medium px-2 py-0.5 rounded border border-amber-200/80 transition text-[11px] flex items-center space-x-1"
+                  title="点击复制提取码"
+                >
+                  <i class="fa-regular fa-copy text-[10px]"></i>
+                  <span>{{ item.password }}</span>
                 </span>
+
+                <!-- 单项有效性检测按钮 -->
+                <button
+                  @click="checkSingle(item)"
+                  class="px-2 py-1 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-lg transition text-[11px] border border-slate-200/60"
+                  title="检测此链接是否失效"
+                >
+                  <i class="fa-solid fa-rotate text-[10px]" :class="{ 'fa-spin text-blue-600': itemStatusMap[item.url]?.status === 'checking' }"></i>
+                  <span class="ml-1 hidden sm:inline">测活</span>
+                </button>
+
+                <!-- 直达链接 -->
                 <a
                   :href="item.url"
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg font-medium transition"
+                  class="px-3 py-1 bg-blue-50 hover:bg-blue-600 text-blue-600 hover:text-white rounded-lg font-medium transition text-[11px] sm:text-xs flex items-center space-x-1"
                 >
-                  直达 <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i>
+                  <span>直达</span>
+                  <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
                 </a>
               </div>
             </div>
           </div>
         </div>
 
+        <!-- 筛选后无有效结果 -->
+        <div v-else-if="filterValidOnly && currentList.length > 0" class="text-center py-16 bg-white rounded-2xl border border-slate-200/80 shadow-2xs">
+          <div class="w-14 h-14 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto text-amber-500 text-2xl mb-3">
+            <i class="fa-solid fa-filter-circle-xmark"></i>
+          </div>
+          <h3 class="text-slate-700 font-semibold mb-1 text-sm">当前分类下未检测出「确定有效」的链接</h3>
+          <p class="text-slate-400 text-xs mb-4">可以关闭「只看有效」筛选，或点击右上角「检测本页有效性」触发全面测活</p>
+          <button @click="filterValidOnly = false" class="px-4 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-medium hover:bg-blue-100">
+            查看全部 {{ currentList.length }} 条资源
+          </button>
+        </div>
+
         <!-- 空数据提示 -->
         <div v-else-if="!loading" class="text-center py-16 bg-white rounded-2xl border border-dashed border-slate-300">
-          <div class="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400 text-2xl mb-4">
+          <div class="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto text-slate-400 text-2xl mb-4">
             <i class="fa-regular fa-folder-open"></i>
           </div>
           <h3 class="text-slate-700 font-semibold mb-1">未找到相关资源</h3>
@@ -220,46 +319,49 @@ ${ICONS_CSS}
     </main>
 
     <!-- 页脚 -->
-    <footer class="border-t border-slate-200 bg-white py-6 mt-auto text-center text-xs text-slate-400">
-      <div class="max-w-5xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+    <footer class="border-t border-slate-200/80 bg-white/70 py-6 mt-auto text-center text-xs text-slate-400 backdrop-blur">
+      <div class="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
         <div>
-          Powered by <strong>Cloudflare Workers & KV</strong> · 边缘高速计算
+          Powered by <strong>Cloudflare Workers & KV</strong> · 边缘高速计算与智能测活
         </div>
         <div class="flex space-x-4">
           <span>兼容 pansou-web / panhub 协议</span>
-          <span>100% 边缘运行</span>
+          <span>原生 TG 分片调度</span>
         </div>
       </div>
     </footer>
 
-    <!-- API 接口文档弹窗 (Modal) -->
+    <!-- API 接入说明弹窗 (Modal) -->
     <div v-if="showApiModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-      <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+      <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
         <div class="flex items-center justify-between pb-3 border-b border-slate-100">
-          <h3 class="font-bold text-lg text-slate-800"><i class="fa-solid fa-code text-blue-600 mr-2"></i>API 接口文档</h3>
+          <h3 class="font-bold text-lg text-slate-800">
+            <i class="fa-solid fa-code text-blue-600 mr-2"></i>开放 API 接口文档
+          </h3>
           <button @click="showApiModal = false" class="text-slate-400 hover:text-slate-600">
             <i class="fa-solid fa-xmark text-lg"></i>
           </button>
         </div>
         <div class="mt-4 space-y-4 text-xs">
           <div>
-            <h4 class="font-bold text-slate-700 text-sm mb-1">1. 网盘搜索接口 (兼容 pansou-web)</h4>
+            <h4 class="font-bold text-slate-700 text-sm mb-1">1. 核心聚合搜索</h4>
             <div class="bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-xs overflow-x-auto">
-              GET /api/search?kw={keyword}&res=merge<br>
               POST /api/search<br>
-              Body: {"keyword":"三体", "res":"merge"}
+              Body: {"kw":"三体", "res":"merge"}<br>
+              返回: {"code":0, "message":"success", "data":{ "total":..., "merged_by_type":{...} }}
             </div>
           </div>
           <div>
-            <h4 class="font-bold text-slate-700 text-sm mb-1">2. 健康检查与源状态</h4>
-            <div class="bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-xs">
-              GET /api/health
+            <h4 class="font-bold text-slate-700 text-sm mb-1">2. 网盘链接有效性检测</h4>
+            <div class="bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-xs overflow-x-auto">
+              GET /api/check?url=https://pan.quark.cn/s/xxx<br>
+              返回: {"code":0, "valid":true, "status":"valid", "label":"有效"}
             </div>
           </div>
           <div>
-            <h4 class="font-bold text-slate-700 text-sm mb-1">3. 热门推荐关键词</h4>
+            <h4 class="font-bold text-slate-700 text-sm mb-1">3. 频道与插件列表</h4>
             <div class="bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-xs">
-              GET /api/hot
+              GET /api/channels · GET /api/plugins
             </div>
           </div>
         </div>
@@ -365,7 +467,6 @@ ${ICONS_CSS}
           <div class="flex-1 overflow-y-auto pr-1">
             <!-- 1. Telegram 频道管理 -->
             <div v-if="adminTab === 'channels'" class="space-y-4">
-              <!-- 工具与筛选栏 -->
               <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2 rounded-xl">
                 <div class="flex items-center space-x-2">
                   <input
@@ -378,186 +479,102 @@ ${ICONS_CSS}
                     已启用: {{ enabledChannelsCount }} / {{ adminSettings.channels.length }}
                   </span>
                 </div>
-                <div class="flex items-center space-x-2 text-xs">
-                  <button @click="toggleAllChannels(true)" class="text-blue-600 hover:underline">全部启用</button>
-                  <span class="text-slate-300">|</span>
-                  <button @click="toggleAllChannels(false)" class="text-slate-500 hover:underline">全部禁用</button>
-                  <span class="text-slate-300">|</span>
-                  <button @click="addChannel" class="px-2 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                    <i class="fa-solid fa-plus mr-1"></i> 新增
-                  </button>
+                <div class="flex space-x-2">
+                  <button @click="toggleAllChannels(true)" class="px-2 py-1 text-xs bg-slate-200 hover:bg-slate-300 rounded">全部启用</button>
+                  <button @click="toggleAllChannels(false)" class="px-2 py-1 text-xs bg-slate-200 hover:bg-slate-300 rounded">全部禁用</button>
+                  <button @click="addChannel" class="px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded font-medium">+ 添加频道</button>
                 </div>
               </div>
 
-              <!-- 频道列表 -->
-              <div class="space-y-2">
-                <div
-                  v-for="(ch, idx) in filteredChannels"
-                  :key="idx"
-                  class="flex items-center justify-between p-3 bg-slate-50 hover:bg-white border rounded-xl transition text-xs"
-                >
-                  <div class="flex items-center space-x-3 flex-1">
-                    <input type="checkbox" v-model="ch.enabled" class="rounded text-blue-600" />
-                    <input
-                      type="text"
-                      v-model="ch.name"
-                      class="px-2 py-1 border rounded bg-white font-mono font-medium text-slate-700 w-44"
-                    />
-                    <input
-                      type="text"
-                      v-model="ch.description"
-                      placeholder="频道描述（如：夸克电影）"
-                      class="px-2 py-1 border rounded bg-white text-slate-500 flex-1"
-                    />
-                  </div>
-                  <div class="flex items-center space-x-2 ml-3">
-                    <a :href="'https://t.me/s/' + ch.name" target="_blank" class="text-slate-400 hover:text-blue-600" title="在 TG 预览">
-                      <i class="fa-solid fa-arrow-up-right-from-square"></i>
-                    </a>
-                    <button @click="removeChannel(ch)" class="text-red-500 hover:text-red-700">
-                      <i class="fa-solid fa-trash"></i>
-                    </button>
-                  </div>
+              <div class="border rounded-xl overflow-hidden text-xs">
+                <div class="max-h-[50vh] overflow-y-auto">
+                  <table class="w-full text-left">
+                    <thead class="bg-slate-100 sticky top-0 text-slate-600">
+                      <tr>
+                        <th class="p-2 w-12 text-center">启用</th>
+                        <th class="p-2">频道 Username</th>
+                        <th class="p-2">描述 / 标签</th>
+                        <th class="p-2 w-20">优先级</th>
+                        <th class="p-2 w-12 text-center">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                      <tr v-for="ch in filteredChannels" :key="ch.name" class="hover:bg-slate-50">
+                        <td class="p-2 text-center">
+                          <input type="checkbox" v-model="ch.enabled" class="rounded text-blue-600" />
+                        </td>
+                        <td class="p-2 font-mono font-medium text-slate-700">@{{ ch.name }}</td>
+                        <td class="p-2"><input type="text" v-model="ch.description" class="w-full px-2 py-0.5 border rounded bg-transparent text-xs" /></td>
+                        <td class="p-2">
+                          <select v-model="ch.priority" class="px-1 py-0.5 border rounded bg-transparent text-xs">
+                            <option :value="1">高</option>
+                            <option :value="2">中</option>
+                            <option :value="3">低</option>
+                          </select>
+                        </td>
+                        <td class="p-2 text-center">
+                          <button @click="removeChannel(ch)" class="text-rose-500 hover:text-rose-700"><i class="fa-regular fa-trash-can"></i></button>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
 
             <!-- 2. 搜索插件管理 -->
             <div v-if="adminTab === 'plugins'" class="space-y-4 text-xs">
-              <div class="bg-blue-50 border border-blue-100 p-3 rounded-xl text-blue-800 leading-relaxed">
-                <div class="font-bold mb-1"><i class="fa-solid fa-plug mr-1"></i> 搜索插件是什么？</div>
-                <p>
-                  插件 = <strong>TG 频道之外</strong>的额外资源来源。本项目内置的「PanSou 聚合节点」一次请求即可拿到
-                  <strong>{{ pluginIdCount }}</strong> 个插件源（hunhepan / jikepan / qupansou / mizixing …）的合并结果，
-                  与频道搜索结果自动去重合并。
-                </p>
-                <p class="mt-1">
-                  搜索页每次只会调用插件 <strong>一次</strong>（不是每个分片都调），因为外部节点一次要跑好几秒。
-                </p>
-              </div>
-
-              <div class="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-2 rounded-xl">
-                <div class="flex items-center space-x-2">
-                  <span class="text-xs text-slate-500">
-                    已启用: {{ enabledPluginsCount }} / {{ (adminSettings.plugins || []).length }}
-                  </span>
-                  <span class="text-slate-300">|</span>
-                  <label class="text-xs text-slate-500">单次并行插件数</label>
-                  <input
-                    type="number"
-                    v-model="adminSettings.maxPluginsPerSearch"
-                    min="1"
-                    max="5"
-                    class="w-16 px-2 py-1 border rounded-lg bg-white"
-                  />
+              <div class="flex items-center justify-between bg-slate-50 p-2 rounded-xl">
+                <div class="text-xs text-slate-600">
+                  启用的插件：<strong>{{ enabledPluginsCount }}</strong> / {{ (adminSettings.plugins || []).length }}
+                  <span class="text-slate-400 ml-2">（共连接 {{ pluginIdCount }} 个外部插件源）</span>
                 </div>
-                <button
-                  @click="addPlugin"
-                  class="px-2 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  <i class="fa-solid fa-plus mr-1"></i> 新增插件
-                </button>
+                <button @click="addPlugin" class="px-2.5 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded font-medium">+ 添加插件</button>
               </div>
 
-              <div v-if="(adminSettings.plugins || []).length === 0" class="text-center py-8 text-slate-400">
-                暂无插件。点击「新增插件」接入 pansou 兼容节点或自定义 REST API。
+              <div v-if="!adminSettings.plugins || adminSettings.plugins.length === 0" class="p-8 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200 text-slate-400">
+                暂无配置插件，点击右上角「恢复默认」可载入内置插件节点
               </div>
 
-              <div class="space-y-3">
-                <div
-                  v-for="(pl, idx) in adminSettings.plugins"
-                  :key="idx"
-                  class="p-3 bg-slate-50 border rounded-xl space-y-2"
-                >
+              <div v-else class="space-y-3">
+                <div v-for="pl in adminSettings.plugins" :key="pl.id" class="p-3 border rounded-xl bg-slate-50/60 space-y-2">
                   <div class="flex items-center justify-between">
-                    <div class="flex items-center space-x-3 flex-1">
+                    <div class="flex items-center space-x-2">
                       <input type="checkbox" v-model="pl.enabled" class="rounded text-blue-600" />
-                      <input
-                        type="text"
-                        v-model="pl.name"
-                        placeholder="插件名称"
-                        class="px-2 py-1 border rounded bg-white font-medium text-slate-700 flex-1"
-                      />
-                      <select v-model="pl.type" class="px-2 py-1 border rounded bg-white text-slate-600">
-                        <option value="pansou">pansou 兼容节点</option>
-                        <option value="custom">自定义 REST API</option>
-                      </select>
+                      <input type="text" v-model="pl.name" placeholder="插件名称" class="px-2 py-1 font-semibold text-xs border rounded bg-white" />
+                      <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 font-mono">{{ pl.type }}</span>
                     </div>
-                    <button @click="removePlugin(pl)" class="text-red-500 hover:text-red-700 ml-3">
-                      <i class="fa-solid fa-trash"></i>
-                    </button>
+                    <button @click="removePlugin(pl)" class="text-rose-500 hover:text-rose-700 text-xs"><i class="fa-regular fa-trash-can mr-1"></i>删除</button>
                   </div>
 
-                  <div class="grid grid-cols-2 gap-2">
-                    <div class="col-span-2">
-                      <label class="block text-slate-500 mb-1">接口地址 apiEndpoint</label>
-                      <input
-                        type="text"
-                        v-model="pl.apiEndpoint"
-                        :placeholder="pl.type === 'pansou' ? 'https://your-node.com/api/search' : 'https://api.example.com/search?q={keyword}'"
-                        class="w-full px-2 py-1 border rounded bg-white font-mono text-slate-600"
-                      />
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <div>
+                      <label class="block text-slate-500 mb-0.5">接口 Endpoint URL</label>
+                      <input type="text" v-model="pl.apiEndpoint" class="w-full px-2 py-1 border rounded bg-white font-mono text-[11px]" />
                     </div>
                     <div>
-                      <label class="block text-slate-500 mb-1">插件 ID（唯一标识）</label>
-                      <input
-                        type="text"
-                        v-model="pl.id"
-                        placeholder="my_node"
-                        class="w-full px-2 py-1 border rounded bg-white font-mono text-slate-600"
-                      />
-                    </div>
-                    <div v-if="pl.type === 'custom'">
-                      <label class="block text-slate-500 mb-1">请求方法</label>
-                      <select v-model="pl.method" class="w-full px-2 py-1 border rounded bg-white text-slate-600">
-                        <option value="GET">GET</option>
-                        <option value="POST">POST</option>
+                      <label class="block text-slate-500 mb-0.5">插件类型</label>
+                      <select v-model="pl.type" class="w-full px-2 py-1 border rounded bg-white text-xs">
+                        <option value="pansou">pansou 兼容节点</option>
+                        <option value="custom">通用 REST API</option>
                       </select>
                     </div>
                   </div>
 
                   <div v-if="pl.type === 'pansou'">
-                    <label class="block text-slate-500 mb-1">
-                      远端插件 ID 列表（逗号分隔，留空表示节点全部启用）
-                    </label>
+                    <label class="block text-slate-500 mb-0.5">远端插件 ID 列表（逗号分隔）</label>
                     <textarea
                       :value="(pl.pluginIds || []).join(',')"
                       @input="pl.pluginIds = $event.target.value.split(',').map(s => s.trim()).filter(Boolean)"
-                      rows="3"
-                      placeholder="hunhepan,jikepan,qupansou,..."
+                      rows="2"
                       class="w-full px-2 py-1 border rounded bg-white font-mono text-[11px] text-slate-600"
                     ></textarea>
-                    <div class="text-slate-400 text-[10px] mt-1">
-                      当前 {{ (pl.pluginIds || []).length }} 个
-                    </div>
-                  </div>
-
-                  <div v-if="pl.type === 'custom'" class="space-y-2">
-                    <div>
-                      <label class="block text-slate-500 mb-1">请求头（JSON，可选，常用于加 Authorization）</label>
-                      <textarea
-                        :value="headersToText(pl.headers)"
-                        @input="pl.headers = parseHeaders($event.target.value)"
-                        rows="2"
-                        placeholder='{"Authorization": "Bearer xxx"}'
-                        class="w-full px-2 py-1 border rounded bg-white font-mono text-[11px] text-slate-600"
-                      ></textarea>
-                    </div>
-                    <div>
-                      <label class="block text-slate-500 mb-1">响应字段映射（JSON，可选）</label>
-                      <textarea
-                        :value="mappingToText(pl.responseMapping)"
-                        @input="pl.responseMapping = parseMapping($event.target.value)"
-                        rows="2"
-                        placeholder='{"resultPath": "data.list", "titleField": "name", "urlField": "link"}'
-                        class="w-full px-2 py-1 border rounded bg-white font-mono text-[11px] text-slate-600"
-                      ></textarea>
-                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
+            <!-- 3. 系统与参数设置 -->
             <div v-if="adminTab === 'system'" class="space-y-4 text-xs">
               <div class="bg-slate-50 p-4 rounded-xl space-y-3">
                 <h4 class="font-bold text-slate-700 text-sm">并发与缓存配置</h4>
@@ -565,21 +582,11 @@ ${ICONS_CSS}
                   <div>
                     <label class="block text-slate-600 mb-1">单次调用的并发数</label>
                     <input type="number" v-model="adminSettings.concurrency" min="1" max="10" class="w-full px-3 py-1.5 border rounded-lg bg-white" />
-                    <span class="text-slate-400 text-[10px]">单个分片内同时抓取的频道数（推荐 6，Cloudflare 单请求最多 6 个并发连接）</span>
                   </div>
                   <div>
                     <label class="block text-slate-600 mb-1">结果缓存时间 (秒)</label>
                     <input type="number" v-model="adminSettings.cacheTtl" min="0" max="86400" class="w-full px-3 py-1.5 border rounded-lg bg-white" />
-                    <span class="text-slate-400 text-[10px]">每个「频道 × 关键词」结果的 KV 缓存时长（0 表示不缓存）</span>
                   </div>
-                </div>
-                <div>
-                  <label class="block text-slate-600 mb-1">单次调用最多处理的频道数</label>
-                  <input type="number" v-model="adminSettings.maxChannelsPerSearch" min="1" max="10" class="w-full px-3 py-1.5 border rounded-lg bg-white" />
-                  <span class="text-slate-400 text-[10px]">
-                    前端未指定频道时，单次调用最多处理几个频道（上限 10，受 Cloudflare Workers 子请求预算约束）。
-                    前端搜索页会把全部启用频道拆成多个分片并发调度，因此这里的数值不影响总覆盖率。
-                  </span>
                 </div>
               </div>
 
@@ -587,7 +594,7 @@ ${ICONS_CSS}
                 <h4 class="font-bold text-slate-700 text-sm">反代与安全配置</h4>
                 <div>
                   <label class="block text-slate-600 mb-1">自定义 Telegram 镜像反代 URL (可选)</label>
-                  <input type="text" v-model="adminSettings.tgProxyUrl" placeholder="如 https://tg.yourdomain.com (留空则直连 t.me)" class="w-full px-3 py-1.5 border rounded-lg bg-white" />
+                  <input type="text" v-model="adminSettings.tgProxyUrl" placeholder="如 https://tg.yourdomain.com" class="w-full px-3 py-1.5 border rounded-lg bg-white" />
                 </div>
                 <div>
                   <label class="block text-slate-600 mb-1">修改管理员密码</label>
@@ -627,7 +634,7 @@ ${ICONS_CSS}
             <textarea
               v-model="batchInputText"
               rows="8"
-              placeholder="支持以下格式（自动智能识别、去除前缀与去重）：&#10;1. 逗号/分号分隔：channel1, @channel2, channel3&#10;2. 换行分隔：&#10;   https://t.me/s/channel1&#10;   @channel2&#10;   channel3"
+              placeholder="channel1, @channel2, https://t.me/s/channel3"
               class="w-full p-3 border rounded-xl font-mono text-xs focus:border-blue-600 focus:outline-none"
             ></textarea>
           </div>
@@ -669,8 +676,12 @@ ${ICONS_CSS}
         const hotSearches = ref(['热辣滚烫', '周处除三害', '沙丘2', '繁花', '三体', '庆余年', '黑神话悟空', '流浪地球2']);
         const mergedResults = ref({});
         const totalCount = ref(0);
-        // 分片检索进度
         const searchProgress = ref({ done: 0, total: 0 });
+
+        // 失效检测状态映射: { [url]: { status: 'checking'|'valid'|'invalid'|'unknown', label: '有效'|'已失效'|'需提取码' } }
+        const itemStatusMap = ref({});
+        const batchChecking = ref(false);
+        const filterValidOnly = ref(false);
 
         // 后台管理状态
         const isAdminAuthed = ref(false);
@@ -731,6 +742,106 @@ ${ICONS_CSS}
           }));
         });
 
+        // 根据「只看有效」过滤后的列表
+        const displayedList = computed(() => {
+          if (!filterValidOnly.value) return currentList.value;
+          return currentList.value.filter(it => {
+            const st = itemStatusMap.value[it.url];
+            return st && (st.status === 'valid' || st.valid === true);
+          });
+        });
+
+        const hasCheckedAny = computed(() => Object.keys(itemStatusMap.value).length > 0);
+        const validOnlyCount = computed(() => {
+          return currentList.value.filter(it => {
+            const st = itemStatusMap.value[it.url];
+            return st && (st.status === 'valid' || st.valid === true);
+          }).length;
+        });
+
+        const getStatusClass = (status) => {
+          if (status === 'valid') return 'status-valid';
+          if (status === 'invalid') return 'status-invalid';
+          if (status === 'checking') return 'status-checking';
+          return 'status-unknown';
+        };
+
+        const getStatusIcon = (status) => {
+          if (status === 'valid') return 'fa-circle-check text-emerald-600';
+          if (status === 'invalid') return 'fa-circle-xmark text-rose-600';
+          if (status === 'checking') return 'fa-circle-notch fa-spin text-blue-600';
+          return 'fa-circle-question text-slate-400';
+        };
+
+        const formatDateTime = (dt) => {
+          if (!dt) return '刚刚';
+          try {
+            const d = new Date(dt);
+            if (isNaN(d.getTime())) return dt.slice(0, 10);
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return m + '-' + day;
+          } catch (e) {
+            return dt.slice(0, 10);
+          }
+        };
+
+        const copyText = (txt, msg) => {
+          if (!txt) return;
+          navigator.clipboard.writeText(txt).then(() => {
+            alert(msg || '已复制到剪贴板');
+          }).catch(() => {
+            prompt('请手动复制：', txt);
+          });
+        };
+
+        // 单个链接测活
+        const checkSingle = async (item) => {
+          if (!item || !item.url) return;
+          itemStatusMap.value[item.url] = { status: 'checking', label: '检测中...' };
+          try {
+            const r = await fetch('/api/check', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                url: item.url,
+                password: item.password || '',
+                type: item.cloudType || ''
+              })
+            });
+            const d = await r.json();
+            itemStatusMap.value[item.url] = {
+              status: d.status || (d.valid ? 'valid' : 'invalid'),
+              label: d.label || (d.valid ? '有效' : '已失效'),
+              valid: d.valid
+            };
+          } catch (e) {
+            itemStatusMap.value[item.url] = { status: 'unknown', label: '未知', valid: undefined };
+          }
+        };
+
+        // 批量测活当前分类下的全部链接（并发 4 路）
+        const batchCheckCurrent = async () => {
+          const list = currentList.value.slice(0, 40); // 最多批量检测前 40 条
+          if (list.length === 0) return;
+          batchChecking.value = true;
+
+          const queue = [...list];
+          const worker = async () => {
+            while (queue.length > 0) {
+              const it = queue.shift();
+              if (!it) break;
+              if (itemStatusMap.value[it.url] && itemStatusMap.value[it.url].status !== 'unknown') {
+                continue;
+              }
+              await checkSingle(it);
+            }
+          };
+
+          await Promise.all([worker(), worker(), worker(), worker()]);
+          batchChecking.value = false;
+        };
+
         const filteredChannels = computed(() => {
           if (!channelFilter.value.trim()) return adminSettings.value.channels;
           const kw = channelFilter.value.toLowerCase();
@@ -747,7 +858,6 @@ ${ICONS_CSS}
           (adminSettings.value.plugins || []).filter(p => p.enabled).length
         );
 
-        /** 当前所有插件引用的远端插件源总数，用于界面提示 */
         const pluginIdCount = computed(() => {
           const ids = new Set();
           for (const p of adminSettings.value.plugins || []) {
@@ -756,14 +866,7 @@ ${ICONS_CSS}
           return ids.size;
         });
 
-        /**
-         * 分片并发搜索
-         * 后端一次调用只处理一个小分片（受 Cloudflare Workers 子请求限制），
-         * 由前端把全部启用频道拆成多片并发调度，结果边到边合并去重、渐进渲染。
-         */
         const SHARD_CONCURRENCY = 4;
-
-        // 频道 / 插件缓存（避免每次搜索都重复请求元信息）
         let cachedChannelsInfo = null;
         let cachedPluginsInfo = null;
 
@@ -776,13 +879,13 @@ ${ICONS_CSS}
           activeTab.value = 'all';
           mergedResults.value = {};
           totalCount.value = 0;
+          itemStatusMap.value = {};
+          filterValidOnly.value = false;
           searchProgress.value = { done: 0, total: 0 };
 
-          // 增量合并容器
           const merged = {};
           const seen = new Set();
           const commit = () => {
-            // 触发 Vue 响应式更新（整体替换引用）
             const snapshot = {};
             for (const k in merged) snapshot[k] = merged[k].slice();
             mergedResults.value = snapshot;
@@ -825,7 +928,6 @@ ${ICONS_CSS}
             const shards = [];
             for (let i = 0; i < all.length; i += size) shards.push(all.slice(i, i + size));
 
-            // 进度总量 = 频道分片数 + 插件（有的话算 1 步，因为整次搜索只调一次插件）
             searchProgress.value = { done: 0, total: shards.length + (pluginCount > 0 ? 1 : 0) };
 
             // 频道分片任务
@@ -856,7 +958,7 @@ ${ICONS_CSS}
               );
             };
 
-            // 插件任务：整次搜索只发一次，避免每个分片都去调外部聚合节点
+            // 插件任务
             const pluginTask = async () => {
               if (pluginCount === 0) return;
               try {
@@ -892,12 +994,11 @@ ${ICONS_CSS}
           keyword.value = '';
           searched.value = false;
           mergedResults.value = {};
+          itemStatusMap.value = {};
         };
 
-        // 管理后台相关方法
         const openAdmin = () => {
           showAdminModal.value = true;
-          // 同步 URL Hash
           if (!window.location.hash.includes('admin')) {
             history.pushState(null, '', '#/admin');
           }
@@ -921,11 +1022,10 @@ ${ICONS_CSS}
 
           try {
             const res = await fetch('/api/admin/settings', {
-              headers: { Authorization: \`Bearer \${token}\` }
+              headers: { Authorization: 'Bearer ' + token }
             });
             if (res.ok) {
               const data = await res.json();
-              // 兼容旧配置：补齐插件相关字段，避免界面读到 undefined 报错
               if (!Array.isArray(data.plugins)) data.plugins = [];
               if (typeof data.maxPluginsPerSearch !== 'number') data.maxPluginsPerSearch = 2;
               adminSettings.value = data;
@@ -958,17 +1058,15 @@ ${ICONS_CSS}
         };
 
         const removeChannel = (ch) => {
-          if (confirm(\`确定删除频道 @\${ch.name} 吗？\`)) {
+          if (confirm('确定删除频道 @' + ch.name + ' 吗？')) {
             adminSettings.value.channels = adminSettings.value.channels.filter(c => c !== ch);
           }
         };
 
-        // ---------- 搜索插件管理 ----------
-
         const addPlugin = () => {
-          const id = prompt('请输入插件 ID（唯一标识，建议用字母/数字/下划线）:');
+          const id = prompt('请输入插件 ID（唯一标识）:');
           if (!id || !id.trim()) return;
-          const endpoint = prompt('请输入接口地址：\\n· pansou 兼容节点填 /api/search 地址\\n· 自定义 API 可用 {keyword} 占位');
+          const endpoint = prompt('请输入接口地址：');
           if (!endpoint || !endpoint.trim()) return;
 
           if (!adminSettings.value.plugins) adminSettings.value.plugins = [];
@@ -987,56 +1085,19 @@ ${ICONS_CSS}
           adminSettings.value.plugins = (adminSettings.value.plugins || []).filter(p => p !== pl);
         };
 
-        // 请求头 / 字段映射在界面上以 JSON 文本编辑，解析失败时静默忽略，
-        // 避免用户输入到一半就报错。
-        const headersToText = (h) => {
-          if (!h || typeof h !== 'object' || Object.keys(h).length === 0) return '';
-          try { return JSON.stringify(h); } catch (e) { return ''; }
-        };
-
-        const parseHeaders = (text) => {
-          const t = String(text || '').trim();
-          if (!t) return undefined;
-          try {
-            const o = JSON.parse(t);
-            return (o && typeof o === 'object') ? o : undefined;
-          } catch (e) {
-            return undefined;
-          }
-        };
-
-        const mappingToText = (m) => {
-          if (!m || typeof m !== 'object' || Object.keys(m).length === 0) return '';
-          try { return JSON.stringify(m); } catch (e) { return ''; }
-        };
-
-        const parseMapping = (text) => {
-          const t = String(text || '').trim();
-          if (!t) return undefined;
-          try {
-            const o = JSON.parse(t);
-            return (o && typeof o === 'object') ? o : undefined;
-          } catch (e) {
-            return undefined;
-          }
-        };
-
         const openBatchModal = () => {
           batchInputText.value = '';
           showBatchModal.value = true;
         };
 
-        // 批量导入 Telegram 频道
         const doBatchImport = () => {
           const raw = batchInputText.value.trim();
           if (!raw) return;
 
-          // 智能分词：支持换行、逗号、分号
           const tokens = raw.split(/[\\r\\n,;，；]+/).map(s => s.trim()).filter(Boolean);
           let count = 0;
 
           tokens.forEach(tok => {
-            // 自动清洗前缀
             const clean = tok
               .replace(/^@/, '')
               .replace(/^https?:\\/\\/t\\.me\\/(s\\/)?/, '')
@@ -1051,25 +1112,16 @@ ${ICONS_CSS}
                 name: clean,
                 enabled: batchEnableAll.value,
                 priority: 2,
-                description:
-                  clean.includes('115') ? '115资源' :
-                  clean.includes('123') ? '123网盘' :
-                  clean.includes('ali') ? '阿里网盘' :
-                  clean.includes('quark') || clean.includes('kuake') ? '夸克网盘' :
-                  clean.includes('baidu') || clean.includes('bd') ? '百度网盘' :
-                  clean.includes('tianyi') || clean.includes('ty') ? '天翼云盘' :
-                  clean.includes('guangya') ? '光鸭网盘' : '批量导入频道'
+                description: '批量导入频道'
               });
               count++;
             }
           });
 
-          alert(\`成功批量导入 \${count} 个频道！记得点击「保存配置」生效。\`);
+          alert('成功批量导入 ' + count + ' 个频道！记得点击「保存配置」生效。');
           if (count > 0) showBatchModal.value = false;
         };
 
-
-        // 导出当前配置
         const exportCurrentConfig = () => {
           const exportData = {
             channels: adminSettings.value.channels,
@@ -1084,7 +1136,7 @@ ${ICONS_CSS}
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = \`pansou-config-\${Date.now()}.json\`;
+          a.download = 'pansou-config-' + Date.now() + '.json';
           a.click();
         };
 
@@ -1107,7 +1159,7 @@ ${ICONS_CSS}
             const res = await fetch('/api/admin/settings', {
               method: 'POST',
               headers: {
-                'Authorization': \`Bearer \${token}\`,
+                'Authorization': 'Bearer ' + token,
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify(payload)
@@ -1117,7 +1169,7 @@ ${ICONS_CSS}
             if (res.ok && data.code === 0) {
               const enabledCount = payload.channels.filter(c => c.enabled).length;
               const enabledPlugins = payload.plugins.filter(p => p.enabled).length;
-              alert(\`配置保存成功！当前已启用 \${enabledCount} 个频道、\${enabledPlugins} 个插件。\`);
+              alert('配置保存成功！当前已启用 ' + enabledCount + ' 个频道、' + enabledPlugins + ' 个插件。');
               if (adminSettings.value.adminPassword) {
                 localStorage.setItem('pansou_admin_token', adminSettings.value.adminPassword);
               }
@@ -1129,7 +1181,6 @@ ${ICONS_CSS}
           }
         };
 
-        // 恢复出厂配置（重新载入内置频道库与插件）
         const resetToDefaults = async () => {
           if (!confirm('确定要恢复出厂配置吗？\\n将重新载入内置的全部 Telegram 频道与搜索插件，当前自定义修改会被覆盖。')) return;
           try {
@@ -1145,14 +1196,13 @@ ${ICONS_CSS}
             adminSettings.value.plugins = data.plugins || [];
             adminSettings.value.maxChannelsPerSearch = data.maxChannelsPerSearch || 8;
             adminSettings.value.maxPluginsPerSearch = data.maxPluginsPerSearch || 2;
-            alert(\`已载入内置配置：\${adminSettings.value.channels.length} 个频道、\${adminSettings.value.plugins.length} 个插件。\\n请点击「保存配置」写入生效。\`);
+            alert('已载入内置配置：' + adminSettings.value.channels.length + ' 个频道、' + adminSettings.value.plugins.length + ' 个插件。\\n请点击「保存配置」写入生效。');
           } catch (e) {
             alert('载入失败');
           }
         };
 
         onMounted(async () => {
-          // 监听 URL 路径与 Hash，支持直接输入 /admin 访问后台
           if (window.location.pathname.startsWith('/admin') || window.location.hash.includes('admin')) {
             openAdmin();
           }
@@ -1188,7 +1238,19 @@ ${ICONS_CSS}
           mergedResults,
           totalCount,
           currentList,
+          displayedList,
           searchProgress,
+          itemStatusMap,
+          batchChecking,
+          filterValidOnly,
+          hasCheckedAny,
+          validOnlyCount,
+          getStatusClass,
+          getStatusIcon,
+          formatDateTime,
+          copyText,
+          checkSingle,
+          batchCheckCurrent,
           isAdminAuthed,
           adminInputPwd,
           adminTab,
@@ -1211,10 +1273,6 @@ ${ICONS_CSS}
           removeChannel,
           addPlugin,
           removePlugin,
-          headersToText,
-          parseHeaders,
-          mappingToText,
-          parseMapping,
           openBatchModal,
           doBatchImport,
           exportCurrentConfig,

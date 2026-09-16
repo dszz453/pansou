@@ -10,8 +10,9 @@ import {
 import { getSystemSettings, saveSystemSettings, verifyAdminAuth, buildDefaultSettings } from './admin';
 import { DEFAULT_MAX_CHANNELS, DEFAULT_MAX_PLUGINS } from './defaults';
 import { searchTgChannel, fetchTgChannelFeed, filterItemsByKeyword } from './tg';
-import { scoreResultRelevance, isTitleRelevant, isUnreliableTitle } from './parser';
+import { scoreResultRelevance, isTitleRelevant, isUnreliableTitle, identifyCloudType } from './parser';
 import { executePluginSearch } from './plugins';
+import { checkLinkValidity } from './checker';
 import { HTML_TEMPLATE } from './ui.html';
 import { VUE_JS, TAILWIND_CSS } from './vendor.generated';
 
@@ -155,6 +156,31 @@ export default {
       );
     }
 
+    // 3.6 网盘链接失效检测 /api/check —— 前端「测活」按钮的后端
+    if (path === '/api/check') {
+      let targetUrl = url.searchParams.get('url') || '';
+      let targetPwd = url.searchParams.get('pwd') || url.searchParams.get('password') || '';
+      let targetType = url.searchParams.get('type') || '';
+
+      if (request.method === 'POST') {
+        try {
+          const b: any = await request.json();
+          if (b && typeof b.url === 'string') {
+            targetUrl = b.url;
+            targetPwd = b.password || b.pwd || targetPwd;
+            targetType = b.type || targetType;
+          }
+        } catch (e) {}
+      }
+
+      if (!targetUrl) {
+        return jsonResponse({ code: 400, message: '缺少 url 参数' }, 400);
+      }
+
+      const check = await checkLinkValidity(targetUrl, targetPwd, targetType);
+      return jsonResponse({ code: 0, url: targetUrl, ...check });
+    }
+
     // 4. 健康检查 /api/health
     if (path === '/api/health') {
       const settings = await getSystemSettings(env);
@@ -283,6 +309,61 @@ export default {
         attempts
       });
     }
+
+    // 4.7 通用抓取诊断 /api/debug/fetch —— 观察 Worker 侧访问任意 URL 的真实响应
+    //     用于排查网盘测活、反代等场景下「本地能通、边缘不通」的问题。
+    //     ?url=目标地址 &method=GET|POST &body=原始请求体 &referer= &origin= &full=1
+    if (path === '/api/debug/fetch') {
+      const target = url.searchParams.get('url') || '';
+      if (!/^https?:\/\//i.test(target)) {
+        return jsonResponse({ ok: false, message: '需要合法的 http(s) url 参数' }, 400);
+      }
+      const method = (url.searchParams.get('method') || 'GET').toUpperCase();
+      const rawBody = url.searchParams.get('body') || '';
+      const referer = url.searchParams.get('referer') || '';
+      const origin = url.searchParams.get('origin') || '';
+      const t0 = Date.now();
+      try {
+        const r = await fetch(target, {
+          method,
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            Accept: 'application/json, text/html;q=0.9, */*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            ...(rawBody ? { 'Content-Type': 'application/json' } : {}),
+            ...(referer ? { Referer: referer } : {}),
+            ...(origin ? { Origin: origin } : {})
+          },
+          ...(rawBody ? { body: rawBody } : {}),
+          redirect: 'follow'
+        });
+        const text = await r.text();
+        if (url.searchParams.get('full') === '1') {
+          return new Response(text, {
+            headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+          });
+        }
+        return jsonResponse({
+          ok: true,
+          target,
+          method,
+          status: r.status,
+          content_type: r.headers.get('content-type') || '',
+          bytes: text.length,
+          ms: Date.now() - t0,
+          head: text.slice(0, 600)
+        });
+      } catch (e: any) {
+        return jsonResponse({
+          ok: false,
+          target,
+          ms: Date.now() - t0,
+          error: `${(e && e.name) || ''}: ${(e && e.message) || e}`
+        });
+      }
+    }
+
     // 5. 后台配置读写 /api/admin/settings
     if (path === '/api/admin/settings') {
       const isAuthed = await verifyAdminAuth(request, env);
@@ -700,7 +781,15 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
 
       seenUrls.add(link.url);
 
-      const cloudType: CloudType = link.type || 'others';
+      // 网盘类型二次校正：
+      // 上游 TG 频道 / 外部聚合节点常把阿里云盘、夸克、123 等误标成 others（或 other），
+      // 这里回到链接本体重新识别一次，只有真正识别不出来的私有链接才留在「其他网盘」。
+      let cloudType: CloudType = link.type || 'others';
+      const reidentified = identifyCloudType(link.url);
+      if (reidentified && reidentified !== 'others' && reidentified !== cloudType) {
+        cloudType = reidentified;
+      }
+
       if (!mergedByType[cloudType]) {
         mergedByType[cloudType] = [];
       }

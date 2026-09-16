@@ -1,24 +1,70 @@
 import { CloudType, ExtractedLink } from './types';
 
-// 网盘匹配规则体系
+// 网盘匹配规则体系（丰富各大网盘、短链、镜像域名与官方分享路径）
 const CLOUD_RULES: Array<{ type: CloudType; reg: RegExp }> = [
-  { type: 'aliyun', reg: /(?:https?:\/\/)?(?:www\.)?(?:aliyundrive\.com|alipan\.com)\/s\/[a-zA-Z0-9_-]+/i },
-  { type: 'quark', reg: /(?:https?:\/\/)?(?:pan|drive|www)?\.?quark\.cn\/s\/[a-zA-Z0-9_-]+/i },
-  { type: 'baidu', reg: /(?:https?:\/\/)?(?:pan|yun)\.baidu\.com\/(?:s\/|share\/init\?surl=)[a-zA-Z0-9_-]+(?:\?pwd=[a-zA-Z0-9]+)?/i },
-  { type: 'tianyi', reg: /(?:https?:\/\/)?(?:cloud|h5|www)?\.?189\.cn\/(?:t|share\.html#[/a-zA-Z0-9]+|web\/share\?code=)\/?[a-zA-Z0-9_-]*/i },
-  { type: 'uc', reg: /(?:https?:\/\/)?(?:drive|fast|www)?\.?uc\.cn\/s\/[a-zA-Z0-9_-]+/i },
-  { type: 'mobile', reg: /(?:https?:\/\/)?(?:caiyun\.139\.com|yun\.139\.com|www\.139\.com)\/(?:w|share)\/?[a-zA-Z0-9_-]*/i },
-  { type: '115', reg: /(?:https?:\/\/)?(?:115\.com|anxia\.com)\/(?:s|web\/lfn)\/[a-zA-Z0-9_-]+/i },
-  { type: 'pikpak', reg: /(?:https?:\/\/)?(?:mypikpak\.com|pikpak\.me|drive\.mypikpak\.com)\/s\/[a-zA-Z0-9_-]+/i },
-  { type: 'xunlei', reg: /(?:https?:\/\/)?(?:pan|mypan)\.xunlei\.com\/s\/[a-zA-Z0-9_-]+/i },
-  { type: '123', reg: /(?:https?:\/\/)?(?:www\.)?(?:123pan\.com|123pan\.cn|123684\.com|123865\.com|123951\.com)\/s\/[a-zA-Z0-9_-]+/i },
-  { type: 'guangya', reg: /(?:https?:\/\/)?(?:www\.)?(?:guangya\.net|gypan\.com|guangya\.cc|guangya\.cn|pan\.guangya\.net)\/s\/[a-zA-Z0-9_-]+/i },
+  // 阿里云盘 / 阿里网盘 (alipan / aliyundrive)
+  {
+    type: 'aliyun',
+    reg: /(?:https?:\/\/)?(?:www\.)?(?:aliyundrive\.com|alipan\.com|alishare\.com)\/(?:s\/|drive\/share\/|share\/)[a-zA-Z0-9_-]+/i
+  },
+  // 夸克网盘 (quark.cn / pan.quark.cn / drive.quark.cn)
+  {
+    type: 'quark',
+    reg: /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)?quark\.cn\/(?:s\/|share\/)[a-zA-Z0-9_-]+/i
+  },
+  // 百度网盘 (pan.baidu.com / yun.baidu.com / baidupan / duan.baidu)
+  {
+    type: 'baidu',
+    reg: /(?:https?:\/\/)?(?:pan|yun|drive|www)?\.?baidu\.com\/(?:s\/|share\/init\?surl=|share\/link\?)[a-zA-Z0-9_-]+(?:\?pwd=[a-zA-Z0-9]+)?/i
+  },
+  // 天翼云盘 (189.cn / cloud.189.cn)
+  {
+    type: 'tianyi',
+    reg: /(?:https?:\/\/)?(?:cloud|h5|www)?\.?189\.cn\/(?:t|share\.html#[/a-zA-Z0-9]+|web\/share\?code=|\/share\/)\/?[a-zA-Z0-9_-]*/i
+  },
+  // UC 网盘 (uc.cn / drive.uc.cn / fast.uc.cn)
+  {
+    type: 'uc',
+    reg: /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)?uc\.cn\/(?:s\/|drive\/share\/|share\/)[a-zA-Z0-9_-]+/i
+  },
+  // 移动云盘 / 和彩云 (139.com / caiyun.139.com / yun.139.com)
+  {
+    type: 'mobile',
+    reg: /(?:https?:\/\/)?(?:caiyun\.139\.com|yun\.139\.com|www\.139\.com|139\.com)\/(?:w|share|s)\/?[a-zA-Z0-9_-]*/i
+  },
+  // 115 网盘 (115.com / anxia.com / 115cdn)
+  {
+    type: '115',
+    reg: /(?:https?:\/\/)?(?:115\.com|anxia\.com)\/(?:s|web\/lfn)\/[a-zA-Z0-9_-]+/i
+  },
+  // PikPak (mypikpak.com / pikpak.me / drive.mypikpak.com / pikpak.in)
+  {
+    type: 'pikpak',
+    reg: /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)?(?:mypikpak\.com|pikpak\.me|pikpak\.in|pikpak\.net)\/(?:s\/|drive\/s\/)[a-zA-Z0-9_-]+/i
+  },
+  // 迅雷云盘 (pan.xunlei.com / mypan.xunlei.com / xunlei.com)
+  {
+    type: 'xunlei',
+    reg: /(?:https?:\/\/)?(?:pan|mypan|drive|www)?\.?xunlei\.com\/(?:s\/|share\/)[a-zA-Z0-9_-]+/i
+  },
+  // 123 云盘 (123pan.com / 123pan.cn / 123684 / 123865 / 123951 等多备用域名)
+  {
+    type: '123',
+    reg: /(?:https?:\/\/)?(?:www\.)?(?:123pan\.com|123pan\.cn|123684\.com|123865\.com|123951\.com|123pan\.net)\/s\/[a-zA-Z0-9_-]+/i
+  },
+  // 光鸭网盘 (guangya.net / gypan.com / guangya.cc / guangya.cn)
+  {
+    type: 'guangya',
+    reg: /(?:https?:\/\/)?(?:www\.)?(?:guangya\.net|gypan\.com|guangya\.cc|guangya\.cn|pan\.guangya\.net)\/s\/[a-zA-Z0-9_-]+/i
+  },
+  // 磁力链接
   { type: 'magnet', reg: /magnet:\?xt=urn:btih:[a-zA-Z0-9]+/i },
+  // 电驴链接
   { type: 'ed2k', reg: /ed2k:\/\/\|file\|[^|]+\|\d+\|[a-fA-F0-9]+\|/i }
 ];
 
 // 提取提取码密码正则
-const PWD_REGEX = /(?:提取码|密码|访问码|提取|pwd|code)[：:\s]*([a-zA-Z0-9]{4,8})/i;
+const PWD_REGEX = /(?:提取码|密码|访问码|提取|pwd|code|口令)[：:\s]*([a-zA-Z0-9]{4,8})/i;
 
 /**
  * 元数据行前缀：这些行是影片信息卡片字段，不是资源名称，选取标题时要跳过
@@ -38,7 +84,6 @@ export function normalizeForMatch(text: string): string {
 /**
  * 判断某个标题是否真正与搜索关键词相关
  * 规则：归一化后标题必须**精确包含**归一化后的关键词。
- * （不做首尾模糊匹配——「乡村」+「爱情」的松匹配会放进《红高粱》《无名的裘德》等无关影片）
  */
 export function isTitleRelevant(title: string, keyword: string): boolean {
   const k = normalizeForMatch(keyword);
@@ -51,8 +96,7 @@ export function isTitleRelevant(title: string, keyword: string): boolean {
 }
 
 /**
- * 剧情文案 / 标签堆砌 前缀：这类文本是影片介绍卡片，不是资源名称，
- * 即便字面命中关键词，其指向的资源往往也不是用户要的那部，必须剔除。
+ * 剧情文案 / 标签堆砌 前缀：这类文本是影片介绍卡片，不是资源名称
  */
 const PLOT_BLURB_REGEX =
   /^(?:本片讲述|该片讲述|影片讲述|本剧讲述|该剧讲述|讲述了|讲述一段|剧情简介|故事简介|一句话|简介|描述|亮点|看点|剧情|影评|推荐语|这部|一部)/;
@@ -66,8 +110,6 @@ const RESOURCE_MARKER_REGEX =
 
 /**
  * 句子式描述特征：成句标点 + 叙事/宣传动词。
- * 「温暖治愈的乡村爱情故事，孔晓振演绎单亲妈妈的坚韧与成长，笑泪交织…」
- * 这类是影片介绍卡片，字面命中关键词但并非该资源本身。
  */
 const SENTENCE_DESC_REGEX =
   /(?:演绎|饰演|讲述|携手|上演|诠释|呈现|成长|治愈|笑泪|励志|一段|让人|值得|不容错过|好评如潮)/;
@@ -81,28 +123,16 @@ export function isUnreliableTitle(title: string): boolean {
   if (META_LINE_REGEX.test(t)) return true;
   if (PLOT_BLURB_REGEX.test(t)) return true;
   if (TAG_LIST_REGEX.test(t)) return true;
-  // 「🔍 关键词：#科幻 #三体 …」这类标签聚合行，关键词只是众多标签之一
   if (/关键词[：:]/.test(t)) return true;
-  // 标签占比过高（如 "#a #b #c 标题"），视为标签堆砌
   const tags = (t.match(/#[^\s#]+/g) || []).length;
   if (tags >= 3 && tags * 4 >= t.length) return true;
-  // 含句末标点（。！？；）的文本基本不可能是资源名
   if (/[。！？；]/.test(t)) return true;
-  // 叙述型文案：既无任何资源结构化标记，又含叙事/宣传动词 —— 判定为剧情简介而非资源名
   if (t.length >= 10 && !RESOURCE_MARKER_REGEX.test(t) && SENTENCE_DESC_REGEX.test(t)) return true;
   return false;
 }
 
-
-
 /**
  * 在一段消息正文中，找出「真正提到关键词」的那一行，作为资源标题。
- *
- * 背景：Telegram 公开频道的搜索是**逐字符松散匹配**（搜「三体」会返回所有含「三」或「体」的帖子），
- * 因此不能直接采信搜索返回结果；必须回到消息正文里做**精确子串校验**，
- * 并把正文中包含关键词的那一行（通常就是剧名行）提取出来当作标题。
- *
- * 返回值按可信度排序：优先「书名号剧名 + 含关键词」，其次「含关键词的正文行」。
  */
 export function pickKeywordLine(content: string, keyword: string): string {
   const k = normalizeForMatch(keyword);
@@ -124,13 +154,13 @@ export function pickKeywordLine(content: string, keyword: string): string {
   const marked = hits.find(l => RESOURCE_MARKER_REGEX.test(l));
   if (marked) return cleanTitleString(marked);
 
-  // ③ 其余取最短的一行（剧名行通常比简介行短得多）
+  // ③ 其余取最短的一行
   hits.sort((a, b) => a.length - b.length);
   return cleanTitleString(hits[0]);
 }
 
 /**
- * 判断一条消息正文是否真的提到了关键词（精确子串，忽略大小写与标点）
+ * 判断一条消息正文是否真的提到了关键词
  */
 export function contentMentions(content: string, keyword: string): boolean {
   const k = normalizeForMatch(keyword);
@@ -139,14 +169,31 @@ export function contentMentions(content: string, keyword: string): boolean {
 }
 
 /**
- * 从文本中识别网盘类型
+ * 从文本或 URL 中高精度识别网盘类型
  */
-export function identifyCloudType(url: string): CloudType {
+export function identifyCloudType(urlOrText: string): CloudType {
+  const target = String(urlOrText || '');
   for (const rule of CLOUD_RULES) {
-    if (rule.reg.test(url)) {
+    if (rule.reg.test(target)) {
       return rule.type;
     }
   }
+
+  // 兜底：如果 URL 或标题包含特定关键词
+  if (/alipan|aliyun|阿里/i.test(target)) return 'aliyun';
+  if (/quark|夸克/i.test(target)) return 'quark';
+  if (/baidu|百度/i.test(target)) return 'baidu';
+  if (/189\.cn|天翼/i.test(target)) return 'tianyi';
+  if (/uc\.cn|uc网盘|优视/i.test(target)) return 'uc';
+  if (/139\.com|移动云盘|和彩云/i.test(target)) return 'mobile';
+  if (/115\.com|115网盘|anxia/i.test(target)) return '115';
+  if (/pikpak/i.test(target)) return 'pikpak';
+  if (/xunlei|迅雷/i.test(target)) return 'xunlei';
+  if (/123pan|123云盘|123网盘/i.test(target)) return '123';
+  if (/guangya|光鸭/i.test(target)) return 'guangya';
+  if (/magnet:\?/i.test(target)) return 'magnet';
+  if (/ed2k:\/\//i.test(target)) return 'ed2k';
+
   return 'others';
 }
 
@@ -171,44 +218,45 @@ export function extractLinksAndPasswords(text: string, globalKeyword?: string): 
     const urlMatches = line.match(/(https?:\/\/[^\s<>"'()]+|magnet:\?xt=urn:btih:[a-zA-Z0-9]+|ed2k:\/\/[^\s<>"'()]+)/gi);
     if (!urlMatches) continue;
 
-    // 尝试寻找该链接专属的具体标题（上下各扫几行）
-    // 注意：TG 资源卡片常见排版是
-    //   第1行：正式剧名（《…》/【…】）
-    //   第2行：剧情亮点 / 简介（含关键词但并非资源名）
-    //   第3行：网盘链接
-    // 因此不能简单取「最近一行」，必须逐行筛掉剧情文案与元数据行，
-    // 再优先挑选书名号剧名 / 带资源标记的行。
     const candidates: string[] = [];
     const collect = (idx: number) => {
       const raw = lines[idx];
       if (!raw) return;
-      // 排除纯链接行
       if (/^(?:https?:\/\/|magnet:|ed2k:)/i.test(raw)) return;
-      // 排除纯密码行
       if (/^(?:提取码|密码|访问码|解压密码)[：:\s]*[a-zA-Z0-9]+$/i.test(raw)) return;
-      // 排除影片元数据行（简介/导演/标签…），它们不是资源名
-      if (META_LINE_REGEX.test(raw)) return;
-
-      const cleaned = cleanTitleString(raw);
-      if (!cleaned || cleaned.length < 2) return;
-      // 排除剧情文案、标签堆砌、句子式描述 —— 它们字面命中关键词但并非资源本身
-      if (isUnreliableTitle(cleaned)) return;
-
-      candidates.push(cleaned);
+      if (isUnreliableTitle(cleanTitleString(raw))) return;
+      candidates.push(cleanTitleString(raw));
     };
-    for (let prevIdx = i; prevIdx >= Math.max(0, i - 4); prevIdx--) collect(prevIdx);
-    for (let nextIdx = i + 1; nextIdx <= Math.min(lines.length - 1, i + 2); nextIdx++) collect(nextIdx);
 
-    // 按下述优先级锁定该链接的专属标题：
-    // ⓪ 直接包含搜索关键词的行（最精准）
-    // ① 书名号 / 方括号包裹的正式剧名  ② 带集数/清晰度/年份等资源标记  ③ 最近的有效行
-    const kNorm = globalKeyword ? normalizeForMatch(globalKeyword) : '';
-    let contextTitle =
-      (kNorm ? candidates.find(c => normalizeForMatch(c).includes(kNorm)) : '') ||
-      candidates.find(c => /^[【《\[][^】》\]]+[】》\]]/.test(c)) ||
-      candidates.find(c => RESOURCE_MARKER_REGEX.test(c)) ||
-      candidates[0] ||
-      '';
+    // 优先向上找
+    for (let back = 1; back <= 4 && i - back >= 0; back++) {
+      collect(i - back);
+    }
+    // 其次向下找
+    for (let fwd = 1; fwd <= 2 && i + fwd < lines.length; fwd++) {
+      collect(i + fwd);
+    }
+
+    // 优先选取包含搜索关键词的行
+    let contextTitle = '';
+    if (globalKeyword) {
+      const kwMatch = candidates.find(c => isTitleRelevant(c, globalKeyword));
+      if (kwMatch) contextTitle = kwMatch;
+    }
+    // 其次选取书名号或方括号包裹的正式剧名
+    if (!contextTitle) {
+      const bracketed = candidates.find(c => /[【《\[][^】》\]]+[】》\]]/.test(c));
+      if (bracketed) contextTitle = bracketed;
+    }
+    // 再次选取带有资源标记的行
+    if (!contextTitle) {
+      const marked = candidates.find(c => RESOURCE_MARKER_REGEX.test(c));
+      if (marked) contextTitle = marked;
+    }
+    // 兜底取最近的一行候选
+    if (!contextTitle && candidates.length > 0) {
+      contextTitle = candidates[0];
+    }
 
     for (const rawUrl of urlMatches) {
       let cleanUrl = rawUrl.replace(/[.,;:!?，。；！？)+]+$/, '');
@@ -261,52 +309,45 @@ export function extractTags(text: string): string[] {
  */
 export function cleanTitleString(raw: string): string {
   let s = raw.trim();
-  // 去除前置引导词如 "1. ", "01. ", "【剧名】：", "名称："
   s = s.replace(/^\d+[\.、\s\-]+/, '');
   s = s.replace(
     /^(?:【剧名】|【名称】|【片名】|【资源名称】|资源名称[：:]|资源名[：:]|剧名[：:]|片名[：:]|名称[：:]|标题[：:])/i,
     ''
   );
-  // 去除前后多余标点但保留有意义的书名号和方括号内容（如 【乡村爱情16】）
   s = s.replace(/^[\|\-—\s:]+/, '').trim();
   return s.slice(0, 100);
 }
 
 /**
- * 智能提取全文主标题（优先选取包含关键词或核心特征的行）
+ * 智能提取全文主标题
  */
 export function extractTitle(text: string, keyword?: string): string {
   const lines = text.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
-  if (lines.length === 0) return '未知资源';
+  if (lines.length === 0) return '未命名资源';
 
-  // 过滤掉纯链接行
-  const candidateLines = lines.filter(l => !/^(?:https?:\/\/|magnet:|ed2k:)/i.test(l));
-  if (candidateLines.length === 0) return lines[0].slice(0, 100);
+  if (keyword) {
+    const kwHit = pickKeywordLine(text, keyword);
+    if (kwHit) return kwHit;
+  }
 
-  // 非元数据行（优先从这些行里选标题）
-  const contentLines = candidateLines.filter(l => !META_LINE_REGEX.test(l));
-  const pool = contentLines.length > 0 ? contentLines : candidateLines;
+  const bracketed = lines.find(l => /[【《\[][^】》\]]+[】》\]]/.test(l) && !isUnreliableTitle(cleanTitleString(l)));
+  if (bracketed) return cleanTitleString(bracketed);
 
-  // 策略 1: 优先寻找包含搜索关键词的行
-  if (keyword && keyword.trim()) {
-    const matchedLine = pool.find(l => isTitleRelevant(l, keyword) && !/(?:频道|群组|广告|关注|赞助|入群)/.test(l));
-    if (matchedLine) {
-      return cleanTitleString(matchedLine);
+  const marked = lines.find(l => RESOURCE_MARKER_REGEX.test(l) && !isUnreliableTitle(cleanTitleString(l)));
+  if (marked) return cleanTitleString(marked);
+
+  for (const line of lines) {
+    const cleaned = cleanTitleString(line);
+    if (!isUnreliableTitle(cleaned) && cleaned.length >= 2) {
+      return cleaned;
     }
   }
 
-  // 策略 2: 优先找包含【...】或《...》的行（通常为影视剧正式名称）
-  const bracketLine = pool.find(l => /^[【《\[][^】》\]]+[】》\]]/.test(l) && !/(?:公告|通知|广告|推广|置顶)/.test(l));
-  if (bracketLine) {
-    return cleanTitleString(bracketLine);
-  }
-
-  // 策略 3: 默认取第一个有效文本行
-  return cleanTitleString(pool[0]);
+  return cleanTitleString(lines[0]) || '未命名资源';
 }
 
 /**
- * 严格相关性与质量打分（用于过滤误报和置顶最精准结果）
+ * 结果相关性打分：用于同一网盘分类内的排序（分越高越靠前）。
  */
 export function scoreResultRelevance(title: string, content: string, keyword: string): number {
   if (!keyword || !keyword.trim()) return 100;

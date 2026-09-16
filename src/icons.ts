@@ -1,9 +1,5 @@
 /**
  * 自托管图标集（替代 Font Awesome CDN）
- *
- * 背景：原先 UI 依赖 cdnjs 的 Font Awesome 样式表。国内网络访问 cdnjs 常常失败，
- * 一旦 CSS 加载不了，图标会全部消失。这里用内联 SVG mask 复刻 UI 中用到的全部图标，
- * 保持 `<i class="fa-solid fa-xmark"></i>` 的书写方式不变，无任何外部请求。
  */
 
 const I = (paths: string, extra = ''): string =>
@@ -29,8 +25,9 @@ const ICON_MAP: Record<string, string> = {
   'fa-magnifying-glass': I(`${C('11', '11', '7')}${P('M16.2 16.2 21 21')}`),
   // 设置 / 参数
   'fa-sliders': I(P('M4 8h8M16 8h4M4 16h4M12 16h8M14 6v4M10 14v4')),
-  // 恢复默认
+  // 恢复默认 / 刷新
   'fa-rotate-left': I(P('M4 4v6h6M4.9 10A8 8 0 1 1 7 17.7')),
+  'fa-arrows-rotate': I(P('M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16M21 21v-5h-5')),
   // 批量导入
   'fa-file-import': I(P('M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5zM14 3v5h5M12 11v6M9 14l3 3 3-3')),
   // 接口文档
@@ -50,6 +47,37 @@ const ICON_MAP: Record<string, string> = {
   'fa-arrow-up-right-from-square': I(P('M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5')),
   // 加载中
   'fa-circle-notch': I(P('M12 3a9 9 0 109 9')),
+  // 复制
+  'fa-copy': I(P('M8 4v12a2 2 0 002 2h8a2 2 0 002-2V4a2 2 0 00-2-2h-8a2 2 0 00-2 2zM4 8v12a2 2 0 002 2h8')),
+  // 勾选 / 成功
+  'fa-check': I(P('M20 6 9 17l-5-5')),
+  'fa-circle-check': I(`${C('12', '12', '9')}${P('M8.5 12.5 10.5 14.5 15.5 9.5')}`),
+  // 失效 / 叉
+  'fa-circle-xmark': I(`${C('12', '12', '9')}${P('M9 9 15 15M15 9 9 15')}`),
+  // 盾牌 / 检测
+  'fa-shield-halved': I(P('M12 2 4 5v6c0 5.5 3.8 10.7 8 12 4.2-1.3 8-6.5 8-12V5l-8-3zM12 2v20')),
+  // 问号 / 未知
+  'fa-circle-question': I(`${C('12', '12', '9')}${P('M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3M12 17h.01')}`),
+  // 排序
+  'fa-arrow-down-wide-short': I(P('M3 6h18M3 12h12M3 18h6')),
+  // 听诊器（测活）
+  'fa-stethoscope': I(
+    P('M6 3v6a5 5 0 0010 0V3M4 3h4M14 3h4M11 14v2a5 5 0 0010 0v-1M21 13h.01')
+  ),
+  // 时钟
+  'fa-clock': I(`${C('12', '12', '9')}${P('M12 7.5V12l3 2')}`),
+  // 喇叭 / 来源渠道
+  'fa-bullhorn': I(P('M3 11v3l14 5V6L3 11zM7 13v6a2 2 0 004 0v-4M19 10a3 3 0 010 6')),
+  // 双向刷新（单项测活）
+  'fa-rotate': I(P('M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5')),
+  // 垃圾桶（别名，兼容 fa-trash-can 写法）
+  'fa-trash-can': I(
+    P('M4 7h16M10 11v6M14 11v6M6 7l1 12a1 1 0 001 1h8a1 1 0 001-1l1-12M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2')
+  ),
+  // 筛选无结果
+  'fa-filter-circle-xmark': I(
+    `${C('15', '15', '6')}${P('M3 5h18l-7 8v6l-4 2v-8L3 5zM13.5 13.5l3 3M16.5 13.5l-3 3')}`
+  )
 };
 
 export const ICONS_CSS = `
