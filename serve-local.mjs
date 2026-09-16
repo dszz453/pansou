@@ -11,6 +11,7 @@ import { Readable } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { statSync } from 'node:fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.argv[2] || process.env.PORT || '8787', 10);
@@ -49,11 +50,31 @@ const env = {
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
-const workerMod = await import(pathToFileURL(path.join(__dirname, 'dist', 'worker.mjs')).href);
-const worker = workerMod.default;
+// 注意：构建产物是 dist/worker.js（esbuild ESM 输出）。
+// 曾经这里错指向 dist/worker.mjs，导致本地预览一直在跑一份陈旧代码，
+// 「改了代码但页面没变」——所以顺便加上 mtime 热重载，免得再踩。
+const workerPath = path.join(__dirname, 'dist', 'worker.js');
+let workerMod = await import(pathToFileURL(workerPath).href + '?t=' + Date.now());
+let worker = workerMod.default;
+let workerMtime = statSync(workerPath).mtimeMs;
+
+/** dist/worker.js 变化后自动重新载入（改完代码跑一次 build.mjs 即可，无需重启本服务） */
+async function reloadIfChanged() {
+  try {
+    const cur = statSync(workerPath).mtimeMs;
+    if (cur === workerMtime) return;
+    workerMtime = cur;
+    workerMod = await import(pathToFileURL(workerPath).href + '?t=' + cur);
+    worker = workerMod.default;
+    console.log('[serve-local] ♻️  检测到 dist/worker.js 更新，已热重载');
+  } catch (e) {
+    console.error('[serve-local] 热重载失败，继续使用上一版本:', e.message);
+  }
+}
 
 const server = http.createServer(async (req, res) => {
   try {
+    await reloadIfChanged();
     const url = `http://${req.headers.host || `127.0.0.1:${PORT}`}${req.url}`;
     const chunks = [];
     for await (const c of req) chunks.push(c);

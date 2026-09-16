@@ -47,10 +47,11 @@ const CLOUD_RULES: Array<{ type: CloudType; reg: RegExp }> = [
     type: 'xunlei',
     reg: /(?:https?:\/\/)?(?:pan|mypan|drive|www)?\.?xunlei\.com\/(?:s\/|share\/)[a-zA-Z0-9_-]+/i
   },
-  // 123 云盘 (123pan.com / 123pan.cn / 123684 / 123865 / 123951 等多备用域名)
+  // 123 云盘：主域名 + 一大串备用域名（123684 / 123685 / 123865 / 123912 / 123951 / 123957 …）
+  // 注意 123pan.com 现已基本停用（页面直接 404），实际流量都在备用域名上。
   {
     type: '123',
-    reg: /(?:https?:\/\/)?(?:www\.)?(?:123pan\.com|123pan\.cn|123684\.com|123865\.com|123951\.com|123pan\.net)\/s\/[a-zA-Z0-9_-]+/i
+    reg: /(?:https?:\/\/)?(?:www\.)?(?:123pan\.(?:com|cn|net)|123684\.com|123685\.com|123865\.com|123912\.com|123951\.com|123957\.com)\/s\/[a-zA-Z0-9_-]+/i
   },
   // 光鸭网盘 (guangya.net / gypan.com / guangya.cc / guangya.cn)
   {
@@ -189,12 +190,27 @@ export function identifyCloudType(urlOrText: string): CloudType {
   if (/115\.com|115网盘|anxia/i.test(target)) return '115';
   if (/pikpak/i.test(target)) return 'pikpak';
   if (/xunlei|迅雷/i.test(target)) return 'xunlei';
-  if (/123pan|123云盘|123网盘/i.test(target)) return '123';
+  if (/123pan|123云盘|123网盘|123684|123685|123865|123912|123951|123957/i.test(target)) return '123';
   if (/guangya|光鸭/i.test(target)) return 'guangya';
   if (/magnet:\?/i.test(target)) return 'magnet';
   if (/ed2k:\/\//i.test(target)) return 'ed2k';
 
   return 'others';
+}
+
+/**
+ * 非资源链接（Telegram 频道/群组邀请、社交推广等）。
+ *
+ * 频道消息正文里经常会带上自己的 t.me 频道链接做推广，这些**不是网盘分享**。
+ * 不过滤的话它们会落进「其他网盘」，用户点进去是频道而不是资源，
+ * 测活时也只会得到一堆「未知」。
+ *
+ * 注意：不要顺手把 t.cn 之类短链加进来——不少网盘分享正是用短链发布的。
+ */
+const NON_RESOURCE_REGEX = /^https?:\/\/(?:t\.me|telegram\.me|telegram\.org|tlgg\.ru|telegra\.ph)\//i;
+
+export function isNonResourceLink(url: string): boolean {
+  return NON_RESOURCE_REGEX.test(String(url || '').trim());
 }
 
 /**

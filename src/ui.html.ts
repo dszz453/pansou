@@ -94,24 +94,47 @@ ${ICONS_CSS}
           原生并发抓取 Telegram 公开频道与聚合插件，支持阿里、夸克、百度、UC、天翼、迅雷、123 等 15+ 类主流网盘
         </p>
 
-        <!-- 搜索表单 -->
-        <div class="mt-7 max-w-2xl mx-auto">
-          <form @submit.prevent="doSearch" class="relative flex items-center shadow-lg shadow-slate-200/50 rounded-2xl">
-            <input
-              type="text"
-              v-model="keyword"
-              placeholder="搜索电影、剧集、动漫、电子书、音乐、游戏、无损音频..."
-              class="w-full px-5 py-3.5 pr-28 text-sm sm:text-base rounded-2xl border-2 border-slate-200 bg-white focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 transition placeholder-slate-400"
-            />
-            <button
-              type="submit"
-              :disabled="loading"
-              class="absolute right-1.5 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium text-sm rounded-xl transition shadow-md shadow-blue-500/20 disabled:opacity-50 flex items-center space-x-1.5"
+        <!-- 搜索表单
+             关键点：按钮**参与 flex 布局**（不再用 absolute），并设 shrink-0，
+             因此无论窗口多窄，按钮都不会被压缩、文字也不会溢出到框外；
+             输入框 flex-1 + min-w-0 只占用剩余空间。 -->
+        <div class="mt-7 w-full max-w-3xl mx-auto">
+          <form @submit.prevent="doSearch" class="w-full">
+            <div
+              id="search-box"
+              class="flex items-center gap-1.5 p-1.5 bg-white border-2 border-slate-200 rounded-2xl shadow-lg shadow-slate-200/60 transition
+                     focus-within:border-blue-500 focus-within:ring-4 focus-within:ring-blue-500/10"
             >
-              <i v-if="loading" class="fa-solid fa-circle-notch fa-spin"></i>
-              <i v-else class="fa-solid fa-magnifying-glass"></i>
-              <span>{{ loading ? '检索中' : '搜索' }}</span>
-            </button>
+              <span class="pl-2.5 flex items-center text-slate-400 shrink-0">
+                <i class="fa-solid fa-magnifying-glass text-sm"></i>
+              </span>
+              <input
+                type="text"
+                v-model="keyword"
+                autocomplete="off"
+                enterkeyhint="search"
+                placeholder="搜索电影、剧集、动漫、电子书…"
+                class="flex-1 min-w-0 bg-transparent border-0 outline-none py-2.5 text-sm sm:text-base text-slate-800 placeholder-slate-400"
+              />
+              <button
+                v-if="keyword"
+                type="button"
+                @click="keyword = ''"
+                class="shrink-0 px-1.5 text-slate-300 hover:text-slate-500 transition"
+                title="清空"
+              >
+                <i class="fa-solid fa-circle-xmark text-sm"></i>
+              </button>
+              <button
+                id="search-submit"
+                type="submit"
+                :disabled="loading"
+                class="shrink-0 whitespace-nowrap px-4 sm:px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium text-sm rounded-xl transition shadow-md shadow-blue-500/20 disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <i class="fa-solid" :class="loading ? 'fa-circle-notch fa-spin' : 'fa-magnifying-glass'"></i>
+                <span>{{ loading ? '检索中' : '搜索' }}</span>
+              </button>
+            </div>
           </form>
 
           <!-- 热门搜索推荐 -->
@@ -156,37 +179,67 @@ ${ICONS_CSS}
       <!-- 搜索结果区 -->
       <div v-if="searched" class="mt-8">
         <!-- 分类切换 Tabs & 工具条 -->
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200/80 pb-3 mb-6 gap-3">
-          <!-- 左侧网盘分类 Tab -->
-          <div class="flex items-center space-x-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+        <div class="mb-6">
+          <!-- 网盘分类：自动换行，保证每个分类都完整可见（不再横向滚动截断） -->
+          <div id="cloud-tabs" class="flex flex-wrap items-center gap-1.5 sm:gap-2">
             <button
               @click="activeTab = 'all'"
-              :class="activeTab === 'all' ? 'bg-blue-600 text-white font-semibold shadow-sm shadow-blue-500/20' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'"
-              class="px-3.5 py-1.5 rounded-xl text-xs sm:text-sm transition whitespace-nowrap flex items-center space-x-1.5"
+              :class="activeTab === 'all'
+                ? 'bg-blue-600 border-blue-600 text-white font-semibold shadow-sm shadow-blue-500/25'
+                : 'bg-white border-slate-200/80 text-slate-600 hover:border-blue-200 hover:text-blue-600'"
+              class="px-3 sm:px-3.5 py-1.5 rounded-xl border text-xs sm:text-sm transition flex items-center gap-1.5"
             >
-              <span>全部</span>
-              <span class="text-[10px] px-1.5 py-0.2 rounded-full" :class="activeTab === 'all' ? 'bg-white/20' : 'bg-slate-100 text-slate-500'">
-                {{ totalCount }}
-              </span>
+              <span>全部网盘</span>
+              <span
+                class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                :class="activeTab === 'all' ? 'bg-white/25' : 'bg-slate-100 text-slate-500'"
+              >{{ totalCount }}</span>
             </button>
             <button
               v-for="(items, type) in mergedResults"
               :key="type"
               @click="activeTab = type"
-              :class="activeTab === type ? 'bg-blue-600 text-white font-semibold shadow-sm shadow-blue-500/20' : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200/60'"
-              class="px-3 py-1.5 rounded-xl text-xs sm:text-sm transition flex items-center space-x-1.5 whitespace-nowrap"
+              :class="activeTab === type
+                ? 'bg-blue-600 border-blue-600 text-white font-semibold shadow-sm shadow-blue-500/25'
+                : 'bg-white border-slate-200/80 text-slate-600 hover:border-blue-200 hover:text-blue-600'"
+              class="px-3 py-1.5 rounded-xl border text-xs sm:text-sm transition flex items-center gap-1.5"
             >
               <span>{{ getCloudLabel(type) }}</span>
-              <span class="text-[10px] px-1.5 py-0.2 rounded-full" :class="activeTab === type ? 'bg-white/20' : 'bg-slate-100 text-slate-500'">
-                {{ items.length }}
-              </span>
+              <span
+                class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                :class="activeTab === type ? 'bg-white/25' : 'bg-slate-100 text-slate-500'"
+              >{{ items.length }}</span>
             </button>
           </div>
 
-          <!-- 右侧工具条（过滤 / 批量检测） -->
-          <div class="flex items-center justify-between sm:justify-end space-x-3 text-xs text-slate-500">
+          <!-- 工具条：自动测活开关 / 只看有效 / 批量检测 -->
+          <div id="result-toolbar" class="mt-3 pt-3 border-t border-slate-200/80 flex flex-wrap items-center gap-2 text-xs">
+            <!-- 自动测活开关（默认存在，一键开启） -->
+            <button
+              @click="toggleAutoCheck"
+              class="flex items-center gap-2 pl-2.5 pr-3 py-1.5 rounded-xl border font-medium transition"
+              :class="autoCheck
+                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                : 'bg-white border-slate-200/80 text-slate-500 hover:bg-slate-50'"
+              :title="autoCheck ? '已开启：搜索结果会自动检测链接有效性' : '点击开启：搜索结果自动检测链接有效性'"
+            >
+              <span
+                class="relative inline-block w-9 h-5 rounded-full transition-colors shrink-0"
+                :class="autoCheck ? 'bg-emerald-500' : 'bg-slate-300'"
+              >
+                <span
+                  class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform"
+                  :class="autoCheck ? 'translate-x-4' : 'translate-x-0'"
+                ></span>
+              </span>
+              <span>自动测活</span>
+            </button>
+
             <!-- 仅显示有效筛选 -->
-            <label v-if="hasCheckedAny" class="flex items-center space-x-1 cursor-pointer select-none text-slate-600 hover:text-blue-600">
+            <label
+              v-if="hasCheckedAny"
+              class="flex items-center gap-1.5 cursor-pointer select-none px-2.5 py-1.5 rounded-xl border border-slate-200/80 bg-white text-slate-600 hover:text-blue-600 transition"
+            >
               <input type="checkbox" v-model="filterValidOnly" class="rounded text-blue-600 focus:ring-0">
               <span>只看有效 ({{ validOnlyCount }})</span>
             </label>
@@ -194,15 +247,18 @@ ${ICONS_CSS}
             <!-- 批量一键检测按钮 -->
             <button
               @click="batchCheckCurrent"
-              :disabled="batchChecking"
-              class="px-2.5 py-1 bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-600 border border-slate-200/80 rounded-lg transition flex items-center space-x-1 font-medium disabled:opacity-50"
-              title="自动检测当前分类下所有网盘链接是否失效"
+              :disabled="batchChecking || currentList.length === 0"
+              class="px-3 py-1.5 bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-600 border border-slate-200/80 rounded-xl transition flex items-center gap-1.5 font-medium disabled:opacity-50"
+              title="检测当前分类下所有网盘链接是否失效"
             >
               <i class="fa-solid" :class="batchChecking ? 'fa-circle-notch fa-spin text-blue-600' : 'fa-stethoscope text-emerald-600'"></i>
-              <span>{{ batchChecking ? '检测中...' : '检测本页有效性' }}</span>
+              <span v-if="batchChecking">检测中 {{ checkedCount }}/{{ checkingTarget }}</span>
+              <span v-else>检测本页有效性</span>
             </button>
 
-            <span class="text-slate-400 hidden md:inline">共 {{ displayedList.length }} 条</span>
+            <span class="text-slate-400 ml-auto whitespace-nowrap">
+              共 {{ displayedList.length }} 条<span v-if="hasCheckedAny"> · 已检测 {{ checkedCount }}</span>
+            </span>
           </div>
         </div>
 
@@ -661,7 +717,7 @@ ${ICONS_CSS}
   <script>
     const { createApp, ref, computed, onMounted } = Vue;
 
-    createApp({
+    const app = createApp({
       setup() {
         const keyword = ref('');
         const searched = ref(false);
@@ -682,6 +738,9 @@ ${ICONS_CSS}
         const itemStatusMap = ref({});
         const batchChecking = ref(false);
         const filterValidOnly = ref(false);
+        // 自动测活：默认开启，搜索完成后自动检测当前列表前若干条链接
+        const autoCheck = ref(true);
+        const checkingTarget = ref(0);
 
         // 后台管理状态
         const isAdminAuthed = ref(false);
@@ -752,6 +811,11 @@ ${ICONS_CSS}
         });
 
         const hasCheckedAny = computed(() => Object.keys(itemStatusMap.value).length > 0);
+
+        // 已出结果的检测条数（不含仍在检测中的）
+        const checkedCount = computed(
+          () => Object.values(itemStatusMap.value).filter(s => s && s.status !== 'checking').length
+        );
         const validOnlyCount = computed(() => {
           return currentList.value.filter(it => {
             const st = itemStatusMap.value[it.url];
@@ -820,11 +884,11 @@ ${ICONS_CSS}
           }
         };
 
-        // 批量测活当前分类下的全部链接（并发 4 路）
-        const batchCheckCurrent = async () => {
-          const list = currentList.value.slice(0, 40); // 最多批量检测前 40 条
-          if (list.length === 0) return;
+        // 测活队列：4 路并发消费（复用同一套 worker，避免重复发起）
+        const runCheckQueue = async (list) => {
+          if (batchChecking.value || !list || list.length === 0) return;
           batchChecking.value = true;
+          checkingTarget.value = checkedCount.value + list.length;
 
           const queue = [...list];
           const worker = async () => {
@@ -840,6 +904,25 @@ ${ICONS_CSS}
 
           await Promise.all([worker(), worker(), worker(), worker()]);
           batchChecking.value = false;
+        };
+
+        // 手动批量：检测当前分类下所有链接（最多前 40 条）
+        const batchCheckCurrent = () => runCheckQueue(currentList.value.slice(0, 40));
+
+        // 自动测活：搜索完成后检测前若干条，数量刻意压小以免拖慢首屏
+        const AUTO_CHECK_LIMIT = 24;
+        const runAutoCheck = () => {
+          if (!autoCheck.value) return;
+          const list = currentList.value
+            .slice(0, AUTO_CHECK_LIMIT)
+            .filter(it => !itemStatusMap.value[it.url]);
+          return runCheckQueue(list);
+        };
+
+        // 开关：开启时立即对当前结果补测一次
+        const toggleAutoCheck = () => {
+          autoCheck.value = !autoCheck.value;
+          if (autoCheck.value) runAutoCheck();
         };
 
         const filteredChannels = computed(() => {
@@ -982,6 +1065,8 @@ ${ICONS_CSS}
             alert('搜索请求失败，请检查网络连接');
           } finally {
             loading.value = false;
+            // 自动测活（默认开启）：结果落盘后立刻开始检测
+            if (autoCheck.value) runAutoCheck();
           }
         };
 
@@ -1243,6 +1328,10 @@ ${ICONS_CSS}
           itemStatusMap,
           batchChecking,
           filterValidOnly,
+          autoCheck,
+          toggleAutoCheck,
+          checkingTarget,
+          checkedCount,
           hasCheckedAny,
           validOnlyCount,
           getStatusClass,
@@ -1280,7 +1369,16 @@ ${ICONS_CSS}
           saveSettings
         };
       }
-    }).mount('#app');
+    });
+
+    // 仅当 URL 带 ?debug=1 时暴露调试句柄：
+    // Vue 生产版不会设置 container.__vue_app__，自动化脚本（ui_shot.mjs）
+    // 需要它来注入模拟数据、读取内部状态做布局回归验证。
+    if (location.search.indexOf('debug=1') >= 0) {
+      window.__pansouApp = app;
+    }
+
+    app.mount('#app');
   </script>
 </body>
 </html>

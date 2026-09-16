@@ -13,6 +13,36 @@ import path from 'node:path';
 const root = path.dirname(fileURLToPath(import.meta.url));
 process.chdir(root);
 
+// ---------- 0. 重新编译 Tailwind CSS（必须在打包之前） ----------
+// 血泪教训：vendor/tailwind.css 是**预编译**产物（Tailwind JIT 只能从模板里
+// 静态扫出类名）。修改 src/ui.html.ts 后若不重跑编译，新用到的 utility 类
+// 根本不会出现在 CSS 里 → 页面「部分样式丢失」：例如搜索框的 `py-3.5`
+// 缺失，输入框高度从 ~48px 塌成 24px，按钮位置随之全乱、文字像溢出框外。
+// 所以这里强制每次构建都重编译，彻底杜绝「CSS 与模板不同步」。
+const tailwindCli = 'node_modules/tailwindcss/lib/cli.js';
+if (existsSync(tailwindCli)) {
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync(
+    process.execPath,
+    [
+      tailwindCli,
+      '-c', 'tailwind.config.js',
+      '-i', 'src/tailwind-input.css',
+      '-o', 'vendor/tailwind.css',
+      '--minify'
+    ],
+    { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' }
+  );
+  if (r.status !== 0) {
+    console.error('[build] ❌ Tailwind CSS 编译失败：');
+    console.error(r.stderr || r.stdout || '(无输出)');
+    process.exit(1);
+  }
+  console.log('[build] 🎨 Tailwind CSS 已按 src/ui.html.ts 重新编译');
+} else {
+  console.warn('[build] ⚠️ 未找到 tailwindcss CLI，跳过 CSS 编译（样式可能与模板不一致）');
+}
+
 // ---------- 1. 生成 vendor 资源模块 ----------
 const vuePath = 'vendor/vue.global.prod.js';
 const cssPath = 'vendor/tailwind.css';

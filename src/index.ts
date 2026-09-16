@@ -10,7 +10,13 @@ import {
 import { getSystemSettings, saveSystemSettings, verifyAdminAuth, buildDefaultSettings } from './admin';
 import { DEFAULT_MAX_CHANNELS, DEFAULT_MAX_PLUGINS } from './defaults';
 import { searchTgChannel, fetchTgChannelFeed, filterItemsByKeyword } from './tg';
-import { scoreResultRelevance, isTitleRelevant, isUnreliableTitle, identifyCloudType } from './parser';
+import {
+  scoreResultRelevance,
+  isTitleRelevant,
+  isUnreliableTitle,
+  identifyCloudType,
+  isNonResourceLink
+} from './parser';
 import { executePluginSearch } from './plugins';
 import { checkLinkValidity } from './checker';
 import { HTML_TEMPLATE } from './ui.html';
@@ -778,6 +784,8 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
       if (!isTitleRelevant(noteTitle, keyword)) continue;
       // 可信度闸门：剧情文案、标签堆砌、元数据行不可作为资源名
       if (isUnreliableTitle(noteTitle)) continue;
+      // 资源闸门：频道推广用的 t.me 邀请链接不是网盘资源，直接剔除
+      if (isNonResourceLink(link.url)) continue;
 
       seenUrls.add(link.url);
 

@@ -119,6 +119,25 @@ function extractId(url: string, regex: RegExp): string {
   return m && m[1] ? m[1] : '';
 }
 
+/**
+ * 从链接 query 里捞提取码。
+ *
+ * 真实搜索结果里提取码常常直接挂在 query 上，形如：
+ *   https://123pan.com/s/oec7Vv-OXIWh?ZY4K
+ *   https://123pan.com/s/IpPUVv-QHDj?提取码:JZMM
+ *   https://115.com/s/swhbjqa3zrk?password=8013
+ * 这些码本来就在用户手上，白扔了很可惜 —— 带上它才能把「提取码错误」
+ * 升级成真正的文件列表判定。
+ */
+function extractPwdFromUrl(url: string): string {
+  const q = url.split('?')[1];
+  if (!q) return '';
+  const m =
+    q.match(/(?:提取码|访问码|密码|password|pwd|code)\s*[:：=]?\s*([A-Za-z0-9]{4})/i) ||
+    q.match(/^([A-Za-z0-9]{4})(?:$|[&#])/);
+  return m ? m[1] : '';
+}
+
 /** 通用页面特征探测 */
 async function probeByPage(
   url: string,
@@ -284,8 +303,11 @@ async function checkQuark(url: string, pwd: string, startedAt: number): Promise<
       if (code === 0 && json.data) {
         return makeResult('valid', '有效', '分享 token 获取成功', 'api', startedAt);
       }
-      // 41027 = 分享不存在（实测确认），其余为分享被取消 / 被删除 / 已过期
-      if ([41004, 41006, 41008, 41010, 41013, 41027, 31001].includes(code)) {
+      // 实测确认（2026-09）的失效码：
+      //   41027 = 分享不存在
+      //   41012 = 好友已取消了分享
+      //   其余为分享被取消 / 被删除 / 已过期
+      if ([41004, 41006, 41008, 41010, 41012, 41013, 41027, 31001].includes(code)) {
         return makeResult('invalid', '已失效', msg || '分享已失效或被删除', 'api', startedAt);
       }
       if (code === 41001 || code === 41002) {
@@ -332,23 +354,40 @@ async function checkBaidu(url: string, pwd: string, startedAt: number): Promise<
   return probeByPage(url, startedAt, 'https://pan.baidu.com/');
 }
 
-/** 123 网盘：官方分享接口 */
-async function check123Pan(url: string, startedAt: number): Promise<CheckResult> {
+/**
+ * 123 网盘：官方分享接口
+ *
+ * 三个坑：
+ *  1. 备用域名一长串（123684/123685/123865/123912/123951/123957…），漏一个就判不了；
+ *  2. 主域名 www.123pan.com 现已基本停用（连页面都 404），
+ *     所以接口请求要**跟着链接自身的域名走**，否则永远只能退回页面探测；
+ *  3. **5103 是一个码两种含义**（2026-09 用真实链接实测）：
+ *       message「此分享不存在」 → 真失效
+ *       message「提取码错误」   → 分享**存在**，只是没给对提取码！
+ *     一刀切把 5103 当失效，就会把「活着但要码」的资源误报成「已失效」——
+ *     和 115 的 4100008 是同一类误报，必须按 message 分辨。
+ *     （另外伪造/格式异常的 key 会返回 400「ShareKey格式异常」，也算失效。）
+ */
+async function check123Pan(url: string, pwd: string, startedAt: number): Promise<CheckResult> {
   const shareKey = extractId(
     url,
-    /123(?:pan|684|865|951)\.(?:com|cn|net)\/s\/([A-Za-z0-9_-]+)/i
+    /123(?:pan|684|685|865|912|951|957)\.(?:com|cn|net)\/s\/([A-Za-z0-9_-]+)/i
   );
   if (!shareKey) return makeResult('unknown', '未知', '无法提取分享 ID', 'api', startedAt);
 
+  const host = (url.match(/^https?:\/\/([^/]+)/i) || [])[1] || 'www.123684.com';
+  // 提取码优先用调用方给的，其次从链接 query 里捞（真实链接常把码挂在 query 上）
+  const passPwd = pwd || extractPwdFromUrl(url);
+
   const api =
-    `https://www.123pan.com/b/api/share/get?limit=100&next=1&orderBy=share_id&orderDirection=desc` +
-    `&shareKey=${shareKey}&SharePwd=&ParentFileId=0&Page=1`;
+    `https://${host}/b/api/share/get?limit=100&next=1&orderBy=share_id&orderDirection=desc` +
+    `&shareKey=${shareKey}&SharePwd=${encodeURIComponent(passPwd)}&ParentFileId=0&Page=1`;
 
   const res = await safeFetch(api, {
     headers: {
       'User-Agent': BROWSER_UA,
       Accept: 'application/json, text/plain, */*',
-      Referer: `https://www.123pan.com/s/${shareKey}`
+      Referer: `https://${host}/s/${shareKey}`
     }
   });
 
@@ -361,6 +400,7 @@ async function check123Pan(url: string, startedAt: number): Promise<CheckResult>
     }
     if (json && typeof json.code !== 'undefined') {
       const code = Number(json.code);
+      const msg = String(json.message || '');
       if (code === 0) {
         const needPwd = !!json.data?.SharePwd;
         return makeResult(
@@ -371,13 +411,104 @@ async function check123Pan(url: string, startedAt: number): Promise<CheckResult>
           startedAt
         );
       }
-      if ([50001, 404, 1001, 5113].includes(code)) {
-        return makeResult('invalid', '已失效', json.message || '分享不存在或已失效', 'api', startedAt);
+      // 5103 +「提取码错误」：分享存在，只是码不对 → 有效·需提取码（绝不报失效）
+      if (code === 5103 && /提取码|密码|访问码/.test(msg)) {
+        return makeResult('valid', '有效·需提取码', msg, 'api', startedAt);
+      }
+      // 5103「此分享不存在」/ 400「ShareKey格式异常」/ 历史主域名时期的失效码
+      if ([5103, 400, 50001, 404, 1001, 5113].includes(code)) {
+        return makeResult('invalid', '已失效', msg || '分享不存在或已失效', 'api', startedAt);
       }
     }
   }
 
-  return probeByPage(url, startedAt, 'https://www.123pan.com/');
+  // 关键优化：123 的接口与分享页是**同一个域名**（本函数刻意跟随链接自身域名）。
+  // 所以接口连不上（res === null = DNS/连接/超时）时，再拿同域页面探测一遍纯属白等，
+  // 只会把单条耗时从 7s 拖到 14s。此时如实返回 unknown ——「域名都不可达」本身就
+  // 属于「无法判定」，按「宁缺毋滥」原则绝不能报成「已失效」。
+  if (!res) {
+    return makeResult(
+      'unknown',
+      '未知',
+      `分享域名 ${host} 不可达（可能已停用），无法判定`,
+      'api',
+      startedAt
+    );
+  }
+
+  return probeByPage(url, startedAt, `https://${host}/`);
+}
+
+/**
+ * 115 网盘：webapi 分享快照接口
+ *
+ * 实测（2026-09）该接口**无需登录**即可调用，且返回语义明确：
+ *   errno 4100033「涉嫌违规，链接已失效」 → 已失效
+ *   errno 4100010「分享已取消」           → 已失效（真实链接实测）
+ *   errno 990002「参数错误。」             → share_code 无法识别 ⇒ 分享不存在
+ *   errno 4100012「请输入访问码」          → 分享存在，需提取码
+ *   errno 4100008「访问码错误」            → 分享存在，只是码给错了（**不是失效**）
+ *   state:true + data.list               → 有效
+ * 注意：另一个常见接口 share/shareinfo 需要登录（errno 990001），不可用。
+ */
+async function check115(url: string, pwd: string, startedAt: number): Promise<CheckResult> {
+  const code = extractId(url, /115(?:cdn)?\.com\/s\/([A-Za-z0-9_-]+)/i);
+  if (!code) return makeResult('unknown', '未知', '无法提取分享 ID', 'api', startedAt);
+
+  // 提取码优先用调用方给的，其次从链接 query 里捞（真实链接常见 `?password=8013`）
+  const passPwd = pwd || extractPwdFromUrl(url);
+
+  const api =
+    `https://webapi.115.com/share/snap?share_code=${code}&offset=0&limit=20` +
+    (passPwd ? `&receive_code=${encodeURIComponent(passPwd)}` : '');
+
+  const res = await safeFetch(api, {
+    headers: {
+      'User-Agent': BROWSER_UA,
+      Accept: 'application/json, text/plain, */*',
+      Referer: 'https://115.com/'
+    }
+  });
+
+  if (res && res.status === 200) {
+    let json: any = null;
+    try {
+      json = await res.json();
+    } catch {
+      json = null;
+    }
+    if (json && typeof json.errno !== 'undefined') {
+      const errno = Number(json.errno);
+      const msg = String(json.error || '');
+
+      // ===== 实测语义（2026-09，逐个用真实链接验证过）=====
+      //   4100033「涉嫌违规，链接已失效」 / 4100034 过期 / 4100004 已删除 → 真失效
+      //   4100010「分享已取消」           → 真失效（真实链接实测）
+      //   990002「参数错误。」             → share_code 无法识别，即分享不存在
+      //                                    （伪造码实测普遍返回它，真码从不返回）
+      //   4100012「请输入访问码」          → 分享**存在**，只是没给码
+      //   4100008「访问码错误」            → 分享**存在**，只是码不对
+      // 关键教训：4100008 早先被误归入失效列表，会把"活着但要正确提取码"的
+      //          分享标成"已失效"，属于典型的误报，已修正。
+      if ([4100033, 4100034, 4100004, 4100009, 4100010, 990002].includes(errno)) {
+        return makeResult('invalid', '已失效', msg || '分享已失效或被删除', 'api', startedAt);
+      }
+      // 分享在，但要访问码（未提供 / 提供错误 都归到这一类，不误报失效）
+      if (errno === 4100012 || errno === 4100008) {
+        return makeResult('valid', '有效·需提取码', msg || '需要访问码', 'api', startedAt);
+      }
+      // 正常返回文件列表
+      if (json.state === true || Array.isArray(json.data?.list)) {
+        return makeResult('valid', '有效', '分享信息获取成功', 'api', startedAt);
+      }
+      // 接口要求登录——无法判定，如实返回
+      if (errno === 990001) {
+        return makeResult('unknown', '未知', '接口要求登录，无法自动判定', 'api', startedAt);
+      }
+    }
+  }
+
+  return probeByPage(url, startedAt, 'https://115.com/');
 }
 
 /**
@@ -387,7 +518,7 @@ async function check123Pan(url: string, startedAt: number): Promise<CheckResult>
  * 且其 clouddrive 接口强制校验 CSRF token，边缘侧拿不到，因此无法自动判定。
  * 这种情况下**诚实地返回「未知」**，不猜测——参见文件头「宁缺毋滥」原则。
  */
-const PAGE_ONLY_TYPES = new Set(['tianyi', 'uc', 'mobile', '115', 'xunlei', 'guangya', 'pikpak']);
+const PAGE_ONLY_TYPES = new Set(['tianyi', 'uc', 'mobile', 'xunlei', 'guangya', 'pikpak']);
 
 /* ------------------------------------------------------------------ */
 /* 对外入口                                                            */
@@ -428,8 +559,10 @@ export async function checkLinkValidity(
       out = await checkQuark(cleanUrl, pwd || '', startedAt);
     } else if (cloudType === 'baidu') {
       out = await checkBaidu(cleanUrl, pwd || '', startedAt);
+    } else if (cloudType === '115') {
+      out = await check115(cleanUrl, pwd || '', startedAt);
     } else if (cloudType === '123') {
-      out = await check123Pan(cleanUrl, startedAt);
+      out = await check123Pan(cleanUrl, pwd || '', startedAt);
     } else if (PAGE_ONLY_TYPES.has(String(cloudType))) {
       out = await probeByPage(cleanUrl, startedAt);
     } else {
