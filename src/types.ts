@@ -92,6 +92,17 @@ export interface PluginConfig {
   responseMapping?: PluginResponseMapping;
 }
 
+/**
+ * 搜索结果缓存模式（V1.2 新增）
+ *
+ * - `memory`（默认）：只缓存在 Worker isolate 内存里，**完全不读写 KV**。
+ *   一次搜索不再产生上百次 KV 写，免费额度不会被搜索结果撑爆。
+ * - `kv`：恢复旧行为，按「频道 × 关键词」写入 KV，可跨边缘节点复用。
+ *   缓存命中率高，但单次搜索会产生 140+ 次写，仅在付费/自建 KV 场景建议开启。
+ * - `off`：不缓存，每次搜索都实时抓取（最省配额，但最慢）。
+ */
+export type ResultCacheMode = 'memory' | 'kv' | 'off';
+
 export interface SystemSettings {
   adminPassword?: string;
   concurrency: number;
@@ -105,6 +116,15 @@ export interface SystemSettings {
   /** 单次搜索允许并行调用的插件数上限 */
   maxPluginsPerSearch?: number;
   hotSearches: string[];
+  /** 搜索结果缓存模式，见 ResultCacheMode */
+  resultCacheMode?: ResultCacheMode;
+  /**
+   * 搜索结果中展示的网盘类型（按数组顺序渲染分类 Tab）。
+   * 未出现在这里的网盘类型不会展示给网页端用户，但第三方 API 调用方仍能拿到全量数据。
+   */
+  visibleCloudTypes?: string[];
+  /** 首页/结果页是否展示「自动测活」开关 */
+  showAutoCheck?: boolean;
 }
 
 export interface Env {

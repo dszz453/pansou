@@ -20,7 +20,12 @@ import {
 import { executePluginSearch } from './plugins';
 import { checkLinkValidity } from './checker';
 import { HTML_TEMPLATE } from './ui.html';
-import { VUE_JS, TAILWIND_CSS } from './vendor.generated';
+import { ADMIN_TEMPLATE } from './admin.ui';
+import { VUE_JS, TAILWIND_CSS, VENDOR_VERSION } from './vendor.generated';
+import { APP_VERSION, APP_VERSION_LABEL, APP_NAME } from './version';
+import { CLOUD_TYPES, DEFAULT_VISIBLE_CLOUDS, normalizeVisibleClouds } from './cloud';
+import { buildManifest, buildServiceWorker, APP_ICON_SVG, APP_FAVICON_SVG } from './pwa';
+import { channelCache, feedCache, pluginCache, cacheStats } from './cache';
 
 /**
  * 单次调用最多处理的频道数。
@@ -104,14 +109,92 @@ export default {
       });
     }
 
-    // 1. 前端 UI 界面（支持根路径 / 以及 /admin 后台直达路径）
-    if (path === '/' || path === '/index.html' || path === '/admin') {
+    // 0.6 PWA 资源：应用图标 / Manifest / Service Worker
+    if (path === '/assets/icon.svg') {
+      return new Response(APP_ICON_SVG, {
+        headers: {
+          'Content-Type': 'image/svg+xml; charset=utf-8',
+          'Cache-Control': 'public, max-age=31536000, immutable'
+        }
+      });
+    }
+
+    if (path === '/assets/favicon.svg' || path === '/favicon.ico' || path === '/favicon.svg') {
+      return new Response(APP_FAVICON_SVG, {
+        headers: {
+          'Content-Type': 'image/svg+xml; charset=utf-8',
+          'Cache-Control': 'public, max-age=31536000, immutable'
+        }
+      });
+    }
+
+    if (path === '/manifest.webmanifest' || path === '/manifest.json') {
+      return new Response(buildManifest(url.origin), {
+        headers: {
+          'Content-Type': 'application/manifest+json; charset=utf-8',
+          'Cache-Control': 'public, max-age=3600'
+        }
+      });
+    }
+
+    // Service Worker 必须由根路径提供才能拿到整个站点的作用域。
+    // 用 VENDOR_VERSION 做版本号：静态资源一更新，SW 缓存自动全量换代。
+    if (path === '/sw.js') {
+      return new Response(buildServiceWorker(APP_VERSION + '-' + VENDOR_VERSION), {
+        headers: {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          // 允许浏览器缓存，但改动后要能及时生效，所以给一个较短的 max-age
+          'Cache-Control': 'public, max-age=600',
+          'Service-Worker-Allowed': '/'
+        }
+      });
+    }
+
+    // 1. 后台管理页面（独立页面，不再挂在首页弹窗上）
+    if (path === '/admin' || path === '/admin/' || path === '/admin.html') {
+      return new Response(ADMIN_TEMPLATE, {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'X-Robots-Tag': 'noindex, nofollow'
+        }
+      });
+    }
+
+    // 1.1 前端首页
+    if (path === '/' || path === '/index.html') {
       return new Response(HTML_TEMPLATE, {
         headers: {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-cache, no-store, must-revalidate'
         }
       });
+    }
+
+    // 1.2 网页端 UI 配置：网盘可见列表 / 是否展示自动测活
+    //     单独开一个轻量接口，前端首屏只拉这一小段 JSON
+    if (path === '/api/ui-config') {
+      const settings = await getSystemSettings(env);
+      const visible = Array.isArray(settings.visibleCloudTypes)
+        ? settings.visibleCloudTypes
+        : DEFAULT_VISIBLE_CLOUDS;
+      return jsonResponse(
+        {
+          code: 0,
+          version: APP_VERSION,
+          version_label: APP_VERSION_LABEL,
+          app_name: APP_NAME,
+          visible_cloud_types: visible,
+          // 顺带把中文名带下去，前端不必再维护一份映射表
+          cloud_labels: CLOUD_TYPES.reduce((acc, c) => {
+            acc[c.key] = c.label;
+            return acc;
+          }, {} as Record<string, string>),
+          show_auto_check: settings.showAutoCheck !== false
+        },
+        200,
+        { 'Cache-Control': 'public, max-age=120, stale-while-revalidate=600' }
+      );
     }
 
     // 2. 热门搜索词 /api/hot
@@ -194,6 +277,8 @@ export default {
       const enabledPlugins = settings.plugins.filter(p => p.enabled && p.apiEndpoint);
       return jsonResponse({
         status: 'ok',
+        version: APP_VERSION,
+        version_label: APP_VERSION_LABEL,
         engine: 'native-tg+pansou-plugins',
         upstream_node: enabledPlugins[0]?.apiEndpoint || null,
         kv_bound: !!env.PANSOU_KV,
@@ -203,7 +288,29 @@ export default {
         plugins_enabled: enabledPlugins.length,
         max_channels_per_call: MAX_CHANNELS_PER_CALL,
         max_plugins_per_call: Math.max(1, settings.maxPluginsPerSearch || DEFAULT_MAX_PLUGINS),
-        cache_ttl: settings.cacheTtl
+        cache_ttl: settings.cacheTtl,
+        /** V1.2：搜索结果缓存模式，memory 表示不消耗 KV 写配额 */
+        result_cache_mode: settings.resultCacheMode || 'memory',
+        visible_cloud_types: settings.visibleCloudTypes || DEFAULT_VISIBLE_CLOUDS,
+        /** 当前 isolate 内存缓存条目数，用于确认「没在用 KV 却依然有命中」 */
+        memory_cache: cacheStats()
+      });
+    }
+
+    // 4.1 缓存与配额诊断 /api/debug/cache
+    if (path === '/api/debug/cache') {
+      const settings = await getSystemSettings(env);
+      return jsonResponse({
+        version: APP_VERSION,
+        result_cache_mode: settings.resultCacheMode || 'memory',
+        kv_bound: !!env.PANSOU_KV,
+        memory_cache: cacheStats(),
+        note:
+          settings.resultCacheMode === 'memory'
+            ? '频道搜索结果仅缓存在 Worker isolate 内存中，不产生 KV 读写；唯一例外是插件结果缓存（每个关键词 1 个键、TTL 6 小时），用于在聚合节点被拦截时兜底。'
+            : settings.resultCacheMode === 'kv'
+              ? '搜索结果会写入 KV，注意免费版每日 1000 次写配额。'
+              : '未开启结果缓存，每次搜索都实时抓取。'
       });
     }
 
@@ -413,7 +520,19 @@ export default {
                 ? body.maxPluginsPerSearch
                 : current.maxPluginsPerSearch,
             tgProxyUrl: typeof body.tgProxyUrl === 'string' ? body.tgProxyUrl : current.tgProxyUrl,
-            hotSearches: Array.isArray(body.hotSearches) ? body.hotSearches : current.hotSearches
+            hotSearches: Array.isArray(body.hotSearches) ? body.hotSearches : current.hotSearches,
+            // V1.2 新增：结果缓存模式 / 网盘展示列表 / 自动测活开关
+            resultCacheMode:
+              body.resultCacheMode === 'memory' ||
+              body.resultCacheMode === 'kv' ||
+              body.resultCacheMode === 'off'
+                ? body.resultCacheMode
+                : current.resultCacheMode,
+            visibleCloudTypes: Array.isArray(body.visibleCloudTypes)
+              ? (normalizeVisibleClouds(body.visibleCloudTypes) ?? current.visibleCloudTypes)
+              : current.visibleCloudTypes,
+            showAutoCheck:
+              typeof body.showAutoCheck === 'boolean' ? body.showAutoCheck : current.showAutoCheck
           };
 
           if (typeof body.adminPassword === 'string' && body.adminPassword.trim()) {
@@ -421,6 +540,10 @@ export default {
           }
 
           await saveSystemSettings(env, next);
+          // 配置变了，清掉搜索结果缓存，避免旧配置下的结果继续被命中
+          channelCache.clear();
+          pluginCache.clear();
+          feedCache.clear();
           return jsonResponse({ code: 0, message: '保存成功' });
         } catch (e) {
           return jsonResponse({ code: 400, message: '参数错误' }, 400);
@@ -442,7 +565,10 @@ export default {
         maxChannelsPerSearch: defaults.maxChannelsPerSearch,
         maxPluginsPerSearch: defaults.maxPluginsPerSearch,
         cacheTtl: defaults.cacheTtl,
-        hotSearches: defaults.hotSearches
+        hotSearches: defaults.hotSearches,
+        resultCacheMode: defaults.resultCacheMode,
+        visibleCloudTypes: defaults.visibleCloudTypes,
+        showAutoCheck: defaults.showAutoCheck
       });
     }
 
@@ -593,7 +719,30 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
     );
   }
 
-  // ---------- 逐频道取数（KV 缓存优先） ----------
+  // ---------- 缓存策略（V1.2 核心优化） ----------
+  //
+  // 背景：Cloudflare 免费版 KV 每天只有 **1000 次写**。
+  // 旧实现把每一次「频道 × 关键词」的搜索结果都写进 KV，一次完整搜索
+  // （143 频道 / 18 个分片）就是 140+ 次写 —— 搜几轮就把当天写额度打满，
+  // 之后所有缓存写入静默失败，表现为「缓存越用越不灵」。
+  //
+  // 现在的三档策略：
+  //   memory（默认）→ 结果只进 isolate 内存，KV 零读写
+  //   kv            → 恢复旧行为（跨节点共享缓存，但吃写配额）
+  //   off           → 完全不缓存，每次实时抓取
+  //
+  // ⚠️ 唯一的例外是「插件结果缓存」：它明知 KV 存在也照样写。
+  //    原因是量级差三个数量级 —— 频道结果是「频道 × 关键词」（一次搜索 140+ 写），
+  //    插件结果是「插件 × 关键词」（一次搜索 1 个键，TTL 6 小时，一天几十次写）。
+  //    而它承担着「聚合节点被 WAF 拦时用旧结果兜底」的职责，只放 isolate 内存会随
+  //    实例回收丢失，导致插件源在最需要兜底时集体归零。详见 loadPlugin。
+  const cacheMode = settings.resultCacheMode || 'memory';
+  const useKv = cacheMode === 'kv' && !!env.PANSOU_KV;
+  const useMemory = cacheMode === 'memory';
+  const cacheDisabled = cacheMode === 'off';
+  /** 内存缓存的 TTL：固定 5 分钟，不受后台 cacheTtl 影响，避免误配成 0 导致内存缓存失效 */
+  const MEMORY_RESULT_TTL = 5 * 60_000;
+
   const cacheTtl = Math.max(60, settings.cacheTtl || 300);
   const kwKey = keyword.toLowerCase();
   const perChannelLimit = Math.max(3, Math.min(settings.concurrency || 6, 10));
@@ -601,17 +750,50 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
   const stats = { fromCache: 0, ok: 0 };
   const startedAt = Date.now();
 
+  /**
+   * 读一档缓存：内存优先（零成本），KV 仅在其被显式启用时参与。
+   * 返回 null 表示没命中。
+   */
+  const readCache = async (key: string): Promise<SearchResultItem[] | null> => {
+    if (forceRefresh) return null;
+
+    if (useMemory) {
+      const hit = channelCache.get(key) as SearchResultItem[] | undefined;
+      return hit || null;
+    }
+
+    if (useKv) {
+      try {
+        const raw = await env.PANSOU_KV!.get(key);
+        if (raw) return JSON.parse(raw) as SearchResultItem[];
+      } catch (e) {}
+    }
+
+    return null;
+  };
+
+  /** 写一档缓存。memory / off 模式下不会产生任何 KV 写。 */
+  const writeCache = (key: string, items: SearchResultItem[]) => {
+    if (useMemory) {
+      channelCache.set(key, items, MEMORY_RESULT_TTL);
+      return;
+    }
+    if (useKv) {
+      // 命中结果按配置 TTL 缓存；空结果只做短缓存，避免把临时故障长期固化
+      const ttl = items.length > 0 ? cacheTtl : EMPTY_CACHE_TTL;
+      ctx.waitUntil(
+        env.PANSOU_KV!.put(key, JSON.stringify(items), { expirationTtl: ttl }).catch(() => {})
+      );
+    }
+  };
+
   const loadChannel = async (channel: string): Promise<SearchResultItem[]> => {
     const cacheKey = `${CHANNEL_CACHE_PREFIX}:${kwKey}:${channel.toLowerCase()}`;
 
-    if (!forceRefresh && env.PANSOU_KV) {
-      try {
-        const raw = await env.PANSOU_KV.get(cacheKey);
-        if (raw) {
-          stats.fromCache++;
-          return JSON.parse(raw) as SearchResultItem[];
-        }
-      } catch (e) {}
+    const cached = await readCache(cacheKey);
+    if (cached) {
+      stats.fromCache++;
+      return cached;
     }
 
     let items: SearchResultItem[] = [];
@@ -627,11 +809,15 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
       const feedKey = `${FEED_CACHE_PREFIX}:${channel.toLowerCase()}`;
       let feedItems: SearchResultItem[] | null = null;
 
-      if (!forceRefresh && env.PANSOU_KV) {
-        try {
-          const raw = await env.PANSOU_KV.get(feedKey);
-          if (raw) feedItems = JSON.parse(raw) as SearchResultItem[];
-        } catch (e) {}
+      if (!forceRefresh) {
+        if (useMemory) {
+          feedItems = (feedCache.get(feedKey) as SearchResultItem[] | undefined) || null;
+        } else if (useKv) {
+          try {
+            const raw = await env.PANSOU_KV!.get(feedKey);
+            if (raw) feedItems = JSON.parse(raw) as SearchResultItem[];
+          } catch (e) {}
+        }
       }
 
       if (!feedItems) {
@@ -640,12 +826,17 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
         } catch (e) {
           feedItems = [];
         }
-        if (env.PANSOU_KV && feedItems && feedItems.length > 0) {
-          ctx.waitUntil(
-            env.PANSOU_KV.put(feedKey, JSON.stringify(feedItems), {
-              expirationTtl: FEED_CACHE_TTL
-            }).catch(() => {})
-          );
+
+        if (feedItems && feedItems.length > 0) {
+          if (useMemory) {
+            feedCache.set(feedKey, feedItems, FEED_CACHE_TTL * 1000);
+          } else if (useKv) {
+            ctx.waitUntil(
+              env.PANSOU_KV!.put(feedKey, JSON.stringify(feedItems), {
+                expirationTtl: FEED_CACHE_TTL
+              }).catch(() => {})
+            );
+          }
         }
       }
 
@@ -654,18 +845,12 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
 
     if (items.length > 0) stats.ok++;
 
-    if (env.PANSOU_KV) {
-      // 命中结果按配置 TTL 缓存；空结果只做短缓存，避免把临时故障长期固化
-      const ttl = items.length > 0 ? cacheTtl : EMPTY_CACHE_TTL;
-      ctx.waitUntil(
-        env.PANSOU_KV.put(cacheKey, JSON.stringify(items), { expirationTtl: ttl }).catch(() => {})
-      );
-    }
+    writeCache(cacheKey, items);
 
     return items;
   };
 
-  // ---------- 插件取数（与频道抓取并行，KV 缓存优先） ----------
+  // ---------- 插件取数（与频道抓取并行，缓存优先） ----------
   // 插件背后是外部聚合节点，一次要跑 5~8 秒，所以：
   //   ① 缓存 TTL 给到 30 分钟（频道结果只有 5 分钟）；
   //   ② 并发上限压到 2，避免和频道抓取抢 Cloudflare 的 6 连接预算。
@@ -675,7 +860,7 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
    * 缓存值结构：{ at: 写入时间戳, items: 结果 }。
    * 兼容早期版本直接存数组的格式（视为「很旧的新鲜数据」）。
    */
-  const readPluginCache = (raw: string): { at: number; items: SearchResultItem[] } | null => {
+  const parsePluginCache = (raw: string): { at: number; items: SearchResultItem[] } | null => {
     try {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) return { at: 0, items: parsed as SearchResultItem[] };
@@ -691,16 +876,26 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
   const loadPlugin = async (plugin: PluginConfig): Promise<SearchResultItem[]> => {
     const cacheKey = `${PLUGIN_CACHE_PREFIX}:${kwKey}:${plugin.id.toLowerCase()}`;
 
-    // 先读缓存。即便强制刷新，也要把它留作「刷新失败时的兜底」。
+    // —— 插件缓存不支持 resultCacheMode === 'off'，其余两种模式都写 KV ——
+    // 参数面：一次搜索只产生 1 个插件缓存键（而不是 140 个），TTL 6 小时，
+    // 因此即使「默认不落 KV」的内存模式，也保留这一条 —— 它是插件源唯一的兜底。
+    const pluginCacheEnabled = !cacheDisabled;
+
+    // 读：内存优先（零成本），未命中再读一次 KV
     let cached: { at: number; items: SearchResultItem[] } | null = null;
-    if (env.PANSOU_KV) {
-      try {
-        const raw = await env.PANSOU_KV.get(cacheKey);
-        if (raw) cached = readPluginCache(raw);
-      } catch (e) {}
+    if (pluginCacheEnabled) {
+      cached = (pluginCache.get(cacheKey) as { at: number; items: SearchResultItem[] }) || null;
+      if (!cached && env.PANSOU_KV) {
+        try {
+          const raw = await env.PANSOU_KV.get(cacheKey);
+          if (raw) cached = parsePluginCache(raw);
+        } catch (e) {}
+      }
     }
 
+    // 回填内存：KV 命中的结果也放进 isolate 缓存，后续同实例请求不再读 KV
     if (cached && cached.items.length > 0 && !forceRefresh) {
+      pluginCache.set(cacheKey, cached, PLUGIN_STALE_TTL * 1000);
       // 新鲜期内直接命中
       if (Date.now() - cached.at < PLUGIN_CACHE_TTL * 1000) {
         pluginStats.fromCache++;
@@ -715,18 +910,25 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
       items = [];
     }
 
-    if (items.length > 0) {
-      pluginStats.ok++;
+    /** 同时写 isolate 内存与 KV（KV 未绑定时自动退化为纯内存） */
+    const persist = (value: { at: number; items: SearchResultItem[] }, ttl: number) => {
+      if (!pluginCacheEnabled) return;
+      pluginCache.set(cacheKey, value, ttl * 1000);
       if (env.PANSOU_KV) {
-        const value = JSON.stringify({ at: Date.now(), items });
         ctx.waitUntil(
-          env.PANSOU_KV.put(cacheKey, value, { expirationTtl: PLUGIN_STALE_TTL }).catch(() => {})
+          env.PANSOU_KV.put(cacheKey, JSON.stringify(value), { expirationTtl: ttl }).catch(() => {})
         );
       }
+    };
+
+    if (items.length > 0) {
+      pluginStats.ok++;
+      persist({ at: Date.now(), items }, PLUGIN_STALE_TTL);
       return items;
     }
 
-    // 本次没抓到 —— 优先返回过期缓存（stale-while-error），而不是给用户一个空结果
+    // 本次没抓到 —— 优先返回过期缓存（stale-while-error），而不是给用户一个空结果。
+    // 这一步靠 KV 才能跨实例生效：节点被 WAF 拦时，历史上成功抓到过的关键词依旧有结果。
     if (cached && cached.items.length > 0) {
       pluginStats.stale++;
       return cached.items;
@@ -735,13 +937,7 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
     pluginStats.failed++;
 
     // 确实没数据（新关键词 + 节点被拦）：只做短缓存，尽快让后续请求再试
-    if (env.PANSOU_KV) {
-      ctx.waitUntil(
-        env.PANSOU_KV.put(cacheKey, JSON.stringify({ at: 0, items: [] }), {
-          expirationTtl: EMPTY_CACHE_TTL
-        }).catch(() => {})
-      );
-    }
+    persist({ at: 0, items: [] }, EMPTY_CACHE_TTL);
 
     return items;
   };
@@ -844,6 +1040,8 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
     /** 彻底没拿到数据的插件数（新关键词 + 节点被拦） */
     plugins_failed: pluginStats.failed,
     from_cache: stats.fromCache,
+    /** 本次使用的缓存通道：memory（不耗 KV）/ kv / off */
+    cache_mode: cacheMode,
     elapsed_ms: Date.now() - startedAt
   });
 }

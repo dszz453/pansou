@@ -82,3 +82,6 @@ live_p.html
 # UI 截图产物（ui_shot.mjs 生成，只用于本地几何断言，不入库）
 *-desktop.png
 *-mobile.png
+admin-*.png
+*-1440.png
+*-390.png

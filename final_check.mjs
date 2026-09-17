@@ -49,8 +49,37 @@ line('Vue 自托管', /assets\/vue\.js/.test(html) ? '✅' : '❌');
 const cdnRefs =
   html.match(/<(?:script|link)[^>]*(?:unpkg|cdnjs|cdn\.tailwindcss)[^>]*>/gi) || [];
 line('无外部 CDN', cdnRefs.length ? '❌ ' + cdnRefs.join(' ') : '✅');
-line('插件管理 Tab', /搜索插件 \(/.test(html) ? '✅' : '❌');
-line('新增插件按钮', /新增插件/.test(html) ? '✅' : '❌');
+// V1.2：后台已从首页弹窗改为独立页面 /admin，首页只应保留搜索功能
+line('首页无后台弹窗', /showAdminModal|showBatchModal/.test(html) ? '❌ 仍有残留' : '✅ 已移除');
+line('PWA Manifest', /manifest\.webmanifest/.test(html) ? '✅' : '❌');
+line('PWA 安装按钮', /installPwa/.test(html) ? '✅' : '❌');
+line('Service Worker', /serviceWorker\.register\('\/sw\.js'\)/.test(html) ? '✅' : '❌');
+
+// 1.1 独立后台页 /admin
+const adm = await get('/admin');
+console.log('\n【1.1 后台 /admin】');
+line('HTTP', adm ? adm.r.status : '-');
+if (adm) {
+  const ah = adm.t;
+  line('独立后台页', /管理后台/.test(ah) ? '✅' : '❌');
+  line('TG 频道 Tab', /TG 频道/.test(ah) ? '✅' : '❌');
+  line('搜索插件 Tab', /搜索插件/.test(ah) ? '✅' : '❌');
+  line('结果展示 Tab（网盘可配置）', /结果展示/.test(ah) ? '✅' : '❌');
+  line('系统设置 Tab', /系统设置/.test(ah) ? '✅' : '❌');
+  line('缓存模式可选', /resultCacheMode/.test(ah) ? '✅' : '❌');
+  line('noindex 不进收录', /noindex/i.test(adm.r.headers.get('x-robots-tag') || '') ? '✅' : '❌');
+}
+
+// 1.2 UI 配置接口
+const uic = await get('/api/ui-config');
+console.log('\n【1.2 UI 配置 /api/ui-config】');
+if (uic) {
+  const j = JSON.parse(uic.t);
+  line('版本', j.version_label + ' (' + j.version + ')');
+  line('网盘展示白名单', Array.isArray(j.visible_cloud_types) ? j.visible_cloud_types.length + ' 类' : '❌');
+  line('网盘中文名映射', j.cloud_labels && j.cloud_labels.quark ? '✅' : '❌');
+  line('自动测活开关', typeof j.show_auto_check === 'boolean' ? '✅ ' + j.show_auto_check : '❌');
+}
 
 // 2. 健康检查
 console.log('\n【2. 健康检查 /api/health】');

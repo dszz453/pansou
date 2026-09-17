@@ -81,7 +81,8 @@ const cleanup = () => {
 const PROBE = `(() => {
   const box = document.getElementById('search-box');
   const btn = document.getElementById('search-submit');
-  const inp = box ? box.querySelector('input[type=text]') : null;
+  // 输入框在 V1.2 改为 type="search"（移动端唤起「搜索」键盘），这里两种都接受
+  const inp = box ? box.querySelector('input[type=search], input[type=text]') : null;
   const tabs = document.getElementById('cloud-tabs');
 
   const r = el => { const b = el.getBoundingClientRect(); return { l: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width), h: Math.round(b.height), t: Math.round(b.top) }; };
@@ -252,7 +253,7 @@ try {
   } else if (KW && KW !== '-') {
     console.log(`执行搜索「${KW}」...`);
     await evaluate(`(() => {
-      const inp = document.querySelector('#search-box input[type=text]');
+      const inp = document.querySelector('#search-box input[type=search], #search-box input[type=text]');
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
       setter.call(inp, ${JSON.stringify(KW)});
       inp.dispatchEvent(new Event('input', { bubbles: true }));

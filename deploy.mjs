@@ -173,7 +173,7 @@ function die(msg, data) {
 
   console.log('\n=== 🎉 部署完成 ===\n');
   console.log(`  站点首页 : ${url}`);
-  console.log(`  后台管理 : ${url}  (右上角「管理后台」按钮)`);
+  console.log(`  后台管理 : ${url}/admin  (独立页面，首页右上角也有入口)`);
   console.log(`  管理密码 : ${VARS.ADMIN_PASSWORD}`);
   console.log(`  健康检查 : ${url}/api/health`);
   console.log(`  搜索接口 : ${url}/api/search?kw=三体&res=merge`);
