@@ -85,8 +85,16 @@ export interface PluginConfig {
   type: 'native' | 'pansou' | 'custom';
   /** native 类型不需要填（实现内置）；pansou 类型填到 /api/search；custom 类型可用 {keyword} 占位 */
   apiEndpoint?: string;
-  /** 仅 pansou 类型：远端要启用的插件 id 列表 */
+  /** 仅 pansou 类型：远端要启用的插件 id 列表（节点名下全部子源） */
   pluginIds?: string[];
+  /**
+   * 仅 pansou 类型：pluginIds 里被**单独关掉**的子源。
+   *
+   * 为什么不让后台直接把关掉的源从 pluginIds 里删掉？那样它们在后台就再也
+   * 显示不出来、也就没法重新开启。所以用「全集 + 停用集」两个字段表达，
+   * 请求前由 effectivePluginIds() 相减得到真正要请求的源。
+   */
+  disabledPluginIds?: string[];
   /** 原生源的中文说明（仅 native 类型，用于后台展示） */
   desc?: string;
   /** 排序权重，越小越先被调用（前端分批调度时用） */

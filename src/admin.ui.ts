@@ -24,8 +24,34 @@ import { DEFAULT_PLUGINS } from './defaults';
  * 每个源 = 一次独立的抓取，因此后台可以逐个开关、逐个看结果。
  */
 
-/** 插件配置被清空时的兜底聚合节点地址（正常流程下沿用 KV 里已存的地址） */
-const FALLBACK_PLUGIN_ENDPOINT = (DEFAULT_PLUGINS[0] && DEFAULT_PLUGINS[0].apiEndpoint) || '';
+/**
+ * 第三方聚合节点的兜底地址（正常流程下沿用 KV 里已存的地址）。
+ *
+ * ⚠️ 不能取 `DEFAULT_PLUGINS[0]` —— V1.4 起第一位是原生源（影盘社），
+ * 原生源没有 apiEndpoint，取其地址会拿到空串，于是后台新增/批量导入第三方源时
+ * 会静默存下一条没有地址的插件配置（不报错，但永远抓不到数据）。
+ * 这里显式找「第一个带地址的非原生插件」。
+ */
+const DEFAULT_AGGREGATE_PLUGIN = DEFAULT_PLUGINS.find(p => p.type !== 'native' && !!p.apiEndpoint);
+const FALLBACK_PLUGIN_ENDPOINT = (DEFAULT_AGGREGATE_PLUGIN && DEFAULT_AGGREGATE_PLUGIN.apiEndpoint) || '';
+
+/**
+ * 兜底的第三方节点配置，**通过 JSON 注入**给浏览器端的脚本用。
+ *
+ * ⚠️ 这段 js 是跑在浏览器里的，`DEFAULT_PLUGINS` 只存在于构建期的 Node 作用域。
+ * 直接在里面写 `DEFAULT_PLUGINS.find(...)` 会抛 ReferenceError，而 Vue 会把事件
+ * 处理器里的异常**吞掉只打 console.error** —— 表现是「点『确认导入』毫无反应、
+ * 也不报错」，极难查。凡是 Node 侧的数据，一律 JSON.stringify 后插值。
+ */
+const DEFAULT_AGGREGATE_NODE_JSON = JSON.stringify(
+  DEFAULT_AGGREGATE_PLUGIN || {
+    id: 'pansou_aggregate',
+    name: 'PanSou 聚合节点',
+    type: 'pansou',
+    apiEndpoint: '',
+    pluginIds: []
+  }
+);
 
 /**
  * V1.3：开放 API 文档。
@@ -536,6 +562,29 @@ ${CLOUD_BADGE_CSS}
             </div>
           </div>
 
+          <!-- 批量导入频道（V1.5：从「系统设置」挪到频道页，与频道列表同屏，改完直接点保存） -->
+          <div class="px-3 sm:px-4 py-3 border-b border-slate-100 bg-slate-50/60 space-y-2">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                <i class="fa-solid fa-file-import text-indigo-600"></i>批量导入频道
+              </h3>
+              <span class="text-[11px] text-slate-400">英文逗号 / 换行 / 分号分隔 · 可整段粘 <code class="font-mono">@name</code> 或 <code class="font-mono">t.me</code> 链接</span>
+            </div>
+            <textarea
+              v-model="batchText"
+              rows="2"
+              placeholder="channel1, @channel2, https://t.me/s/channel3"
+              class="w-full p-2.5 border border-slate-200 rounded-xl text-xs font-mono outline-none focus:border-indigo-500 bg-white"
+            ></textarea>
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                <input type="checkbox" v-model="batchEnableAll" class="w-4 h-4 rounded text-indigo-600">
+                <span>导入后默认启用</span>
+              </label>
+              <button @click="doBatchImport" class="px-4 py-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition">确认导入</button>
+            </div>
+          </div>
+
           <div class="px-3 sm:px-4 py-2 bg-slate-50 border-b border-slate-100 text-[11px] text-slate-500 flex items-center justify-between">
             <span>已启用 <strong class="text-slate-700">{{ enabledChannelsCount }}</strong> / {{ settings.channels.length }}（显示 {{ filteredChannels.length }} 条）</span>
             <span class="hidden sm:inline text-slate-400">勾选即启用 · 修改后需点保存</span>
@@ -638,6 +687,8 @@ ${CLOUD_BADGE_CSS}
               每个插件源独立一行，勾选即启用。<strong class="text-slate-500">「原生」源由本站后端直接抓取</strong>，
               不经过任何第三方站点，各自独立、互不影响；「第三方」源则是对外部聚合节点发起的一次 HTTP 请求。
               不确定的源建议关掉——每多开一个都会增加单次搜索的耗时。备注只用于你自己辨认，不影响抓取。
+              行尾的垃圾桶可删除单个源；第三方节点下的子源被删空后，保存时该节点配置也会一并移除
+              （需要找回请用「恢复出厂配置」）。
             </p>
 
             <!-- 桌面端表格 -->
@@ -648,12 +699,13 @@ ${CLOUD_BADGE_CSS}
                     <th class="p-2.5 w-14 text-center font-medium">启用</th>
                     <th class="p-2.5 w-56 font-medium">插件源 ID</th>
                     <th class="p-2.5 font-medium">备注（可选）</th>
+                    <th class="p-2.5 w-16 text-center font-medium">操作</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100">
                   <tr
                     v-for="src in filteredPluginSources"
-                    :key="src.id"
+                    :key="src.id + '@' + (src.parentId || 'self')"
                     class="hover:bg-slate-50/70 transition"
                     :class="src.enabled ? '' : 'opacity-60'"
                   >
@@ -670,6 +722,13 @@ ${CLOUD_BADGE_CSS}
                     <td class="p-2.5">
                       <input v-model="src.label" maxlength="40" placeholder="如：磁力熊" class="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500">
                     </td>
+                    <td class="p-2.5 text-center">
+                      <button
+                        @click="removePluginSource(src)"
+                        title="删除该源"
+                        class="text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg p-1.5 transition"
+                      ><i class="fa-regular fa-trash-can"></i></button>
+                    </td>
                   </tr>
                 </tbody>
               </table>
@@ -679,7 +738,7 @@ ${CLOUD_BADGE_CSS}
             <div class="md:hidden max-h-[62vh] overflow-y-auto divide-y divide-slate-100">
               <div
                 v-for="src in filteredPluginSources"
-                :key="src.id"
+                :key="src.id + '@' + (src.parentId || 'self')"
                 class="p-3 flex items-start gap-3"
                 :class="src.enabled ? '' : 'opacity-60'"
               >
@@ -692,12 +751,44 @@ ${CLOUD_BADGE_CSS}
                   <div class="text-[10px] text-slate-400 truncate">{{ src.name }} · {{ src.desc }}</div>
                   <input v-model="src.label" maxlength="40" placeholder="备注（可选）" class="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500">
                 </div>
+                <button
+                  @click="removePluginSource(src)"
+                  class="shrink-0 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg p-2 transition"
+                ><i class="fa-regular fa-trash-can"></i></button>
               </div>
             </div>
 
             <div v-if="filteredPluginSources.length === 0" class="p-8 text-center text-xs text-slate-400">
               没有匹配「{{ pluginFilter }}」的插件源
             </div>
+          </div>
+
+          <!-- 批量导入第三方源（英文逗号分隔） -->
+          <div class="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+              <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <i class="fa-solid fa-file-import text-indigo-600"></i>批量导入第三方源
+              </h3>
+              <span class="text-[11px] text-slate-400">英文逗号分隔</span>
+            </div>
+            <textarea
+              v-model="pluginBatchText"
+              rows="3"
+              placeholder="clxiong,xiaozhang,kuakedi,https://so.example.xyz/api/ps/pan"
+              class="w-full p-3 border border-slate-200 rounded-xl text-xs font-mono outline-none focus:border-indigo-500"
+            ></textarea>
+            <div class="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                <input type="checkbox" v-model="pluginBatchEnable" class="w-4 h-4 rounded text-indigo-600">
+                <span>导入后默认启用</span>
+              </label>
+              <button @click="doPluginBatchImport" class="px-4 py-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition">确认导入</button>
+            </div>
+            <p class="mt-2 text-[11px] text-slate-400 leading-relaxed">
+              英文逗号、换行或分号分隔都可以，一次可粘一大批（也接受整条链接，会自动取最后一段）。
+              导入的源挂在现有第三方节点下（默认 <span class="font-mono">pansou_aggregate</span>），
+              每源独立一行，可逐个启用或删除；重复的自动跳过。导入后记得点保存。
+            </p>
           </div>
         </section>
 
@@ -979,20 +1070,6 @@ ${CLOUD_BADGE_CSS}
             </div>
             <p class="text-[11px] text-slate-400">恢复出厂会重新载入内置的全部 TG 频道与插件节点，当前自定义修改将被覆盖（仍需点击保存才真正生效）。</p>
           </div>
-
-          <div class="bg-white rounded-2xl border border-slate-200 p-4">
-            <h3 class="font-bold text-sm text-slate-800 mb-2 flex items-center gap-2">
-              <i class="fa-solid fa-plug text-indigo-600"></i>批量导入频道
-            </h3>
-            <textarea v-model="batchText" rows="4" placeholder="channel1, @channel2, https://t.me/s/channel3" class="w-full p-3 border border-slate-200 rounded-xl text-xs font-mono outline-none focus:border-indigo-500"></textarea>
-            <div class="mt-2 flex items-center justify-between">
-              <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-                <input type="checkbox" v-model="batchEnableAll" class="w-4 h-4 rounded text-indigo-600">
-                <span>导入后默认启用</span>
-              </label>
-              <button @click="doBatchImport" class="px-4 py-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition">确认导入</button>
-            </div>
-          </div>
         </section>
 
         <!-- 移动端保存条 -->
@@ -1028,6 +1105,8 @@ ${CLOUD_BADGE_CSS}
 
   /** 插件配置被清空时的兜底节点地址 */
   const FALLBACK_PLUGIN_ENDPOINT = ${JSON.stringify(FALLBACK_PLUGIN_ENDPOINT)};
+  /** 兜底第三方节点配置（Node 侧 JSON 注入，浏览器作用域里没有 DEFAULT_PLUGINS） */
+  const DEFAULT_AGGREGATE_NODE = ${DEFAULT_AGGREGATE_NODE_JSON};
 
   /** V1.3：开放 API 文档数据 */
   const API_GROUPS = ${API_GROUPS_JSON};
@@ -1082,6 +1161,11 @@ ${CLOUD_BADGE_CSS}
       const pluginSources = ref([]);
       const pluginTesting = ref(false);
       const pluginTestResult = ref(null);
+      /** 插件源批量导入：支持英文逗号 / 换行 / 分号分隔 */
+      const pluginBatchText = ref('');
+      // 默认「导入即启用」：用户是主动粘一批源进来用的，导完还全部关着会很反直觉。
+      // 不想启用的话，旁边的复选框就在导入按钮左边。
+      const pluginBatchEnable = ref(true);
       /** 聚合节点地址：不在界面展示，保存时原样带回，避免弄丢已有节点地址 */
       let pluginEndpoint = FALLBACK_PLUGIN_ENDPOINT;
 
@@ -1181,27 +1265,65 @@ ${CLOUD_BADGE_CSS}
           if (!endpoint && p && p.apiEndpoint) endpoint = p.apiEndpoint;
         });
 
-        return {
-          endpoint: endpoint || FALLBACK_PLUGIN_ENDPOINT,
-          sources: list
-            .filter(p => p && p.id)
-            .map(p => ({
-              id: p.id,
-              label: (labels && labels[p.id]) || '',
-              enabled: p.enabled !== false,
-              type: p.type || 'pansou',
-              name: p.name || p.id,
-              desc:
-                p.desc ||
-                (p.type === 'native'
-                  ? 'Worker 内原生抓取'
-                  : p.pluginIds && p.pluginIds.length
-                    ? '第三方聚合节点（' + p.pluginIds.length + ' 个子源）'
-                    : '第三方聚合节点'),
-              // 记录原始配置，保存时原样回写（保住 endpoint / pluginIds）
-              base: p
-            }))
-        };
+        const sources = [];
+        for (const p of list) {
+          if (!p || !p.id) continue;
+          const type = p.type || 'pansou';
+
+          /*
+           * 第三方聚合节点：把 pluginIds 里的子源**展开成一行一个**。
+           *
+           * 这里的「一行」是**界面粒度**，不是请求粒度 —— 保存时会按 parentId
+           * 合并回一条节点配置（见 save）。这样既能在界面上逐个开关/删除/批量导入，
+           * 又不会让运行时按行发请求（20 个子源 = 20 次 HTTP 是灾难）。
+           */
+          if (type === 'pansou' && Array.isArray(p.pluginIds) && p.pluginIds.length > 0) {
+            const nodeOn = p.enabled !== false;
+            // 子源自己的开关存在 disabledPluginIds 里（pluginIds 保留全集，否则
+            // 关掉的源在后台就再也显示不出来、也就没法重新打开）
+            const nodeOff = new Set(
+              (Array.isArray(p.disabledPluginIds) ? p.disabledPluginIds : []).map(x => String(x))
+            );
+            for (const rawId of p.pluginIds) {
+              const childId = String(rawId || '').trim();
+              if (!childId) continue;
+              sources.push({
+                id: childId,
+                label: (labels && labels[childId]) || '',
+                // 节点整体停用时，它的子源在界面上也应显示为关闭
+                enabled: nodeOn && !nodeOff.has(childId),
+                type: 'pansou',
+                name: childId,
+                desc: '第三方节点子源 · ' + (p.name || p.id),
+                parentId: p.id,
+                parentBase: p,
+                base: null
+              });
+            }
+            continue;
+          }
+
+          sources.push({
+            id: p.id,
+            label: (labels && labels[p.id]) || '',
+            enabled: p.enabled !== false,
+            type,
+            name: p.name || p.id,
+            desc:
+              p.desc ||
+              (type === 'native'
+                ? 'Worker 内原生抓取'
+                : type === 'custom'
+                  ? '自定义 REST API'
+                  : '第三方聚合节点'),
+            parentId: null,
+            parentBase: null,
+            // 记录原始配置，保存时原样回写（保住 endpoint / pluginIds / 自定义字段）
+            base: p
+          });
+        }
+
+        return { endpoint: endpoint || FALLBACK_PLUGIN_ENDPOINT, sources };
       };
 
       const applySettings = (data) => {
@@ -1268,13 +1390,40 @@ ${CLOUD_BADGE_CSS}
         saving.value = true;
         try {
           // V1.4：插件源列表 → 还原成插件配置。
-          // 原生源各自独立；第三方聚合节点保留原有 endpoint / pluginIds，这里只更新开关。
+          //
+          // 界面上一行 = 一个源，但运行时不该按行发请求：第三方聚合节点的一次 HTTP
+          // 就能返回它全部子源的结果，拆成 20 行发 20 次是灾难。所以这里按 parentId
+          // 把子源行**归并回一条节点配置**（pluginIds = 该节点下所有子源行），
+          // 节点整体的 enabled = 「是否还有至少一个子源开着」。
+          // 原生源没有 parentId，各自独立成条。
           const labels = {};
           pluginSources.value.forEach(s => {
             if (s.label && s.label.trim()) labels[s.id] = s.label.trim();
           });
 
-          const plugins = pluginSources.value.map(s => {
+          const plugins = [];
+          const nodeByParent = {};
+          pluginSources.value.forEach(s => {
+            if (s.parentId) {
+              let node = nodeByParent[s.parentId];
+              if (!node) {
+                const base = s.parentBase || {
+                  id: s.parentId,
+                  name: s.parentId,
+                  type: 'pansou',
+                  apiEndpoint: pluginEndpoint
+                };
+                node = { ...base, pluginIds: [], disabledPluginIds: [], enabled: false };
+                nodeByParent[s.parentId] = node;
+                plugins.push(node);
+              }
+              node.pluginIds.push(s.id);
+              // 单独关掉的子源记进停用集：它们仍要在界面上显示，但不参与请求
+              if (!s.enabled) node.disabledPluginIds.push(s.id);
+              // 任一子源开着，节点就得开着（子源粒度才是真正的开关）
+              if (s.enabled) node.enabled = true;
+              return;
+            }
             const base = s.base || {
               id: s.id,
               name: s.name || s.id,
@@ -1282,7 +1431,7 @@ ${CLOUD_BADGE_CSS}
               apiEndpoint: s.type === 'native' ? undefined : pluginEndpoint,
               pluginIds: []
             };
-            return { ...base, enabled: !!s.enabled };
+            plugins.push({ ...base, enabled: !!s.enabled });
           });
 
           const payload = {
@@ -1366,21 +1515,30 @@ ${CLOUD_BADGE_CSS}
         dirty.value = true;
       };
 
+      /**
+       * 批量导入 TG 频道。
+       * 分隔符与「插件源批量导入」保持一致：英文逗号 / 换行 / 分号 / 中文逗号分号 / 空格，
+       * 允许整段粘贴 @name 或 t.me 链接；自动去重、剔除非法名，并回显跳过数量。
+       */
       const doBatchImport = () => {
         const raw = batchText.value.trim();
-        if (!raw) return;
-        const tokens = raw.split(/[\\r\\n,;，；]+/).map(s => s.trim()).filter(Boolean);
-        let count = 0;
+        if (!raw) { showToast('请先粘贴要导入的频道', 'error'); return; }
+        const tokens = raw.split(/[\\r\\n,;，；\\s]+/).map(s => s.trim()).filter(Boolean);
+        let added = 0, dup = 0, bad = 0;
         tokens.forEach(tok => {
           const clean = tok.replace(/^@/, '').replace(/^https?:\\/\\/t\\.me\\/(s\\/)?/i, '').replace(/[/?#].*$/, '').trim();
-          if (!clean || !/^[A-Za-z0-9_]{4,64}$/.test(clean)) return;
-          if (settings.value.channels.some(c => c.name.toLowerCase() === clean.toLowerCase())) return;
+          if (!clean || !/^[A-Za-z0-9_]{4,64}$/.test(clean)) { bad++; return; }
+          if (settings.value.channels.some(c => c.name.toLowerCase() === clean.toLowerCase())) { dup++; return; }
           settings.value.channels.unshift({ name: clean, enabled: batchEnableAll.value, priority: 2, description: '批量导入' });
-          count++;
+          added++;
         });
         batchText.value = '';
-        dirty.value = true;
-        showToast('成功导入 ' + count + ' 个频道，记得保存');
+        if (added > 0) dirty.value = true;
+        if (added === 0) {
+          showToast('没有可导入的频道' + (dup ? '（' + dup + ' 个已存在）' : '') + (bad ? '（' + bad + ' 个格式不合法）' : ''), 'error');
+          return;
+        }
+        showToast('成功导入 ' + added + ' 个频道，记得保存' + (dup ? '（跳过 ' + dup + ' 个已存在）' : ''));
       };
 
       /* ---------------- 插件源（V1.4：一行 = 一个插件条目） ---------------- */
@@ -1390,48 +1548,193 @@ ${CLOUD_BADGE_CSS}
       };
 
       const resetPluginSources = () => {
-        // 「回到内置默认」= 原生源全开、第三方聚合节点关闭、清空备注。
-        // 之所以顺手关掉聚合节点：V1.4 的目标就是搜索不再依赖第三方站点。
+        // 「回到内置默认」= 原生源全开、第三方源全关、清空原生源备注。
+        // 之所以顺手关掉第三方：V1.4 的目标就是搜索不再依赖第三方站点。
+        //
+        // 注意这里按 **type** 判定而不是按 id === 'pansou_aggregate'：
+        // 第三方节点的子源展开后，每行的 id 是子源自己的（如 hunhepan），
+        // 节点 id 根本不是一个行，按 id 判会一个都关不掉。
         pluginSources.value.forEach(s => {
           if (s.type === 'native') {
             s.enabled = true;
             s.label = '';
-          } else if (s.id === 'pansou_aggregate') {
+          } else {
             s.enabled = false;
           }
         });
         dirty.value = true;
-        showToast('已恢复为「原生源全开 / 聚合节点关闭」，记得点保存');
-      };
-
-      const addPluginSource = () => {
-        const raw = prompt('插件源 ID（节点支持的源标识，如 clxiong）：');
-        if (!raw || !raw.trim()) return;
-        const id = raw.trim().replace(/[^A-Za-z0-9_.-]/g, '');
-        if (!id) { showToast('源 ID 格式不合法', 'error'); return; }
-        if (pluginSources.value.some(s => s.id === id)) { showToast('该源已在列表中', 'error'); return; }
-        pluginSources.value.unshift({
-          id,
-          label: '',
-          enabled: true,
-          type: 'pansou',
-          name: id,
-          desc: '自定义聚合节点',
-          base: { id, name: id, type: 'pansou', apiEndpoint: pluginEndpoint, pluginIds: [id], enabled: true }
-        });
-        dirty.value = true;
+        showToast('已恢复为「原生源全开 / 第三方源全关」，记得点保存');
       };
 
       /**
-       * 逐个测试当前已启用的插件源。
+       * 清洗用户输入的源 ID。
        *
-       * 原生源（type='native'）由 Worker 内引擎直接抓取，第三方节点走 HTTP，
-       * 后端统一返回逐源结果；这里把「通过几个 / 各源条数」摊平展示，
-       * 一眼就能看出是哪个源挂了（而不是只知道「整条插件链路失败」）。
+       * 允许直接粘链接（取最后一段路径），也允许带 @ 或参数，最后只保留
+       * 字母 / 数字 / 下划线 / 点 / 连字符——这是节点侧认的字符集，
+       * 脏字符会让请求静默返回空。
+       */
+      const cleanSourceId = (raw) => {
+        let s = String(raw == null ? '' : raw).trim();
+        if (!s) return '';
+        s = s.replace(/^@/, '').replace(/^https?:\\/\\//i, '');
+        if (s.indexOf('/') >= 0) s = s.split('/').filter(Boolean).pop() || '';
+        s = s.replace(/[?#].*$/, '');
+        return s.replace(/[^A-Za-z0-9_.-]/g, '');
+      };
+
+      /**
+       * 找一个「能挂第三方源」的节点，返回 { parentId, parentBase }。
+       *
+       * 优先级（顺序不能颠倒）：
+       *   ① 列表里已有子源的节点 —— 直接挂上去（默认是 pansou_aggregate）；
+       *   ② 列表里那个**还没有任何子源**的第三方节点行 —— 挂给它，别去新建；
+       *   ③ 内置默认里的第三方节点 —— 子源被删空后能靠它把节点重建回来；
+       *   ④ 都没有就现造一个 pansou_custom。
+       */
+      const resolvePansouParent = () => {
+        const child = pluginSources.value.find(s => s.parentId && s.parentBase);
+        if (child) return { parentId: child.parentId, parentBase: child.parentBase };
+
+        const emptyNode = pluginSources.value.find(
+          s => !s.parentId && s.base && (s.base.type || 'pansou') !== 'native' && s.base.id
+        );
+        if (emptyNode) return { parentId: emptyNode.id, parentBase: emptyNode.base };
+
+        const fallback = DEFAULT_AGGREGATE_NODE;
+        if (fallback && fallback.id) return { parentId: fallback.id, parentBase: fallback };
+
+        return {
+          parentId: 'pansou_custom',
+          parentBase: {
+            id: 'pansou_custom',
+            name: '自定义聚合节点',
+            type: 'pansou',
+            apiEndpoint: pluginEndpoint,
+            enabled: false,
+            pluginIds: []
+          }
+        };
+      };
+
+      /** 把 id 作为一个第三方子源挂到节点下；重复 / 非法返回 false */
+      const attachPansouSource = (id, enabled) => {
+        if (!id) return false;
+        if (pluginSources.value.some(s => s.id === id)) return false;
+        const parent = resolvePansouParent();
+        const parentName = (parent.parentBase && (parent.parentBase.name || parent.parentBase.id)) || parent.parentId;
+        // 插在同节点最后一个子源之后，界面上聚成一块
+        let insertAt = pluginSources.value.length;
+        pluginSources.value.forEach((s, i) => {
+          if (s.parentId === parent.parentId) insertAt = i + 1;
+        });
+        pluginSources.value.splice(insertAt, 0, {
+          id,
+          label: '',
+          enabled: !!enabled,
+          type: 'pansou',
+          name: id,
+          desc: '第三方节点子源 · ' + parentName,
+          parentId: parent.parentId,
+          parentBase: parent.parentBase,
+          base: null
+        });
+
+        /*
+         * 这个节点原来在界面上是「一行空节点」（还没有任何子源），现在它有子源了，
+         * 那一行必须摘掉 —— 否则保存时同一个 id 会落盘成两条配置
+         * （一条 pluginIds 为空、一条带着子源），运行时会把节点白白请求两遍。
+         */
+        const isPlaceholder = r => !r.parentId && r.base && r.base.id === parent.parentId;
+        if (pluginSources.value.some(isPlaceholder)) {
+          pluginSources.value = pluginSources.value.filter(r => !isPlaceholder(r));
+        }
+        return true;
+      };
+
+      const addPluginSource = () => {
+        const raw = prompt('插件源 ID（第三方节点支持的源标识，如 clxiong）：');
+        if (!raw || !raw.trim()) return;
+        const id = cleanSourceId(raw);
+        if (!id) { showToast('源 ID 格式不合法', 'error'); return; }
+        if (!attachPansouSource(id, true)) { showToast('该源已在列表中', 'error'); return; }
+        dirty.value = true;
+        showToast('已添加「' + id + '」，记得保存');
+      };
+
+      /** 删除单个插件源（原生源整条移除；第三方子源从所属节点里摘掉） */
+      const removePluginSource = (src) => {
+        if (!src) return;
+        const isNative = src.type === 'native';
+        const tip = isNative
+          ? '确定删除原生源「' + src.id + '」吗？\\n\\n删除后需点击保存才生效；要找回它请用「恢复出厂配置」。'
+          : '确定删除第三方源「' + src.id + '」吗？' +
+            (src.parentId ? '\\n\\n它属于节点 ' + src.parentId + '，删除只是从这个节点里摘掉。' : '');
+        if (!confirm(tip)) return;
+        pluginSources.value = pluginSources.value.filter(s => s !== src);
+        dirty.value = true;
+        // 子源被删空 → 保存时该节点配置不会再生效（见 save 的按 parentId 归并）
+        const left = src.parentId ? pluginSources.value.filter(s => s.parentId === src.parentId).length : -1;
+        if (left === 0) {
+          showToast('已删除「' + src.id + '」，节点已无子源，保存后一并移除');
+        } else {
+          showToast('已删除「' + src.id + '」，记得保存');
+        }
+      };
+
+      /**
+       * 批量导入第三方插件源：支持英文逗号、中文逗号、分号、换行、空格分隔。
+       * 全部挂到同一个节点下（有子源就用现有节点，否则用内置默认节点）。
+       */
+      const doPluginBatchImport = () => {
+        const raw = pluginBatchText.value.trim();
+        if (!raw) { showToast('请先粘贴要导入的源 ID', 'error'); return; }
+        const tokens = raw.split(/[\\r\\n,;，；\\s]+/).map(t => t.trim()).filter(Boolean);
+        const seen = {};
+        pluginSources.value.forEach(s => { seen[s.id] = true; });
+        let ok = 0;
+        let dup = 0;
+        let bad = 0;
+        tokens.forEach(tok => {
+          const id = cleanSourceId(tok);
+          if (!id) { bad++; return; }
+          if (seen[id]) { dup++; return; }
+          if (attachPansouSource(id, pluginBatchEnable.value)) {
+            seen[id] = true;
+            ok++;
+          } else {
+            dup++;
+          }
+        });
+        pluginBatchText.value = '';
+        dirty.value = true;
+        showToast(
+          '导入 ' + ok + ' 个源' +
+            (dup ? '，跳过重复 ' + dup + ' 个' : '') +
+            (bad ? '，忽略无效 ' + bad + ' 项' : '') +
+            '，记得保存'
+        );
+      };
+
+      /**
+       * 测试当前已启用的插件源。
+       *
+       * 注意「请求单元」和界面上的「行」不是一回事：原生源一行一次抓取，
+       * 而第三方节点名下的 N 个子源共用**一次** HTTP（后端按节点抓一次、
+       * 一次带回全部 pluginIds 的结果）。所以这里先把已启用行折成请求单元
+       * （原生源算自己，第三方子源算它所属的节点）再去测，否则会拿子源 id
+       * 去问后端、一个都匹配不上。
        */
       const testPlugins = async () => {
-        const ids = pluginSources.value.filter(s => s.enabled).map(s => s.id);
-        if (ids.length === 0) {
+        const units = [];
+        const seenUnit = {};
+        pluginSources.value.forEach(s => {
+          if (!s.enabled) return;
+          const unitId = s.parentId || s.id;
+          if (seenUnit[unitId]) return;
+          seenUnit[unitId] = true;
+          units.push(unitId);
+        });
+        if (units.length === 0) {
           pluginTestResult.value = { ok: false, text: '没有启用任何插件源' };
           return;
         }
@@ -1440,7 +1743,7 @@ ${CLOUD_BADGE_CSS}
         try {
           const r = await fetch(
             '/api/debug/plugin?rounds=1&kw=' + encodeURIComponent('流浪地球') +
-              '&ids=' + encodeURIComponent(ids.join(',')),
+              '&ids=' + encodeURIComponent(units.join(',')),
             { headers: { Authorization: 'Bearer ' + currentToken() } }
           );
           const d = await r.json();
@@ -1451,11 +1754,14 @@ ${CLOUD_BADGE_CSS}
           }
           const okCount = rows.filter(x => x.ok).length;
           const parts = rows.map(x => {
+            // 第三方节点：把「这一次请求覆盖了哪几个子源」说清楚
+            const cover =
+              x.type === 'native' || !x.covered ? '' : '（含 ' + x.covered + ' 个子源）';
             if (x.ok) {
-              return x.id + (x.total != null ? ' ' + x.total + ' 条' : ' 通') + '（' + x.ms + 'ms）';
+              return x.id + cover + (x.total != null ? ' ' + x.total + ' 条' : ' 通') + '（' + x.ms + 'ms）';
             }
             return (
-              x.id + ' 失败' +
+              x.id + cover + ' 失败' +
               (x.error ? '：' + String(x.error).slice(0, 24) : x.status ? ' HTTP ' + x.status : '')
             );
           });
@@ -1645,8 +1951,10 @@ ${CLOUD_BADGE_CSS}
         toggleAllChannels, addChannel, removeChannel, doBatchImport,
         // V1.4：插件源 / 安全状态 / API 文档
         pluginFilter, pluginSources, pluginTesting, pluginTestResult,
+        pluginBatchText, pluginBatchEnable,
         filteredPluginSources, enabledPluginCount,
-        toggleAllPlugins, resetPluginSources, addPluginSource, testPlugins,
+        toggleAllPlugins, resetPluginSources, addPluginSource, removePluginSource,
+        doPluginBatchImport, testPlugins,
         passwordHashed, frontendAuthOn, siteOrigin, copyText, apiGroups: API_GROUPS,
         toggleCloud, selectAllClouds, selectMainClouds, moveCloud,
         exportConfig, importConfig, resetToDefaults, save,

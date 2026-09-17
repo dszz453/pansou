@@ -102,7 +102,7 @@ async function scenePages() {
 
   const home = await (await get(worker, env, '/')).text();
   check('首页 200 且挂载点存在', home.includes('<div id="app"'));
-  check('首页版本号已是 V1.3', home.includes('V1.3'));
+  check('首页版本号已是 ' + EXPECT_LABEL, home.includes(EXPECT_LABEL));
   check('首页已移除「管理后台」入口', !home.includes('管理后台'), 'grep 管理后台');
   check('首页已移除 /admin 链接', !home.includes('href="/admin"'));
   check('首页已移除 API 弹窗状态', !home.includes('showApiModal'));
@@ -117,6 +117,25 @@ async function scenePages() {
   check('后台插件区已删除接口地址字段', !admin.includes('v-model="pl.apiEndpoint"'));
   check('后台插件区已删除展开编辑区', !admin.includes('expandedPlugin'));
   check('后台插件区改为按源一行', admin.includes('v-model="src.enabled"') && admin.includes('pluginSources'));
+  // V1.5：第三方源要能删除 + 按英文逗号批量导入，且子源开关必须是真的
+  check('后台插件区每行有删除按钮', admin.includes('removePluginSource(src)'));
+  check('后台含插件源批量导入', admin.includes('pluginBatchText') && admin.includes('doPluginBatchImport'));
+  check('批量导入提示为英文逗号分隔', admin.includes('英文逗号分隔'));
+  // V1.5：频道批量导入从「系统设置」挪到「频道」页，与频道列表同屏
+  // 先剥掉 HTML 注释再定位/计数 —— 注释里也会出现这个词，不剥会误判
+  const adminClean = admin.replace(/<!--[\s\S]*?-->/g, '');
+  const chSecIdx = adminClean.indexOf("activeTab === 'channels'");
+  const plSecIdx = adminClean.indexOf("activeTab === 'plugins'");
+  const batchIdx = adminClean.indexOf('批量导入频道');
+  check('后台含频道批量导入', adminClean.includes('doBatchImport') && adminClean.includes('v-model="batchText"'));
+  check(
+    '频道批量导入落在「频道」Tab 内',
+    batchIdx > chSecIdx && batchIdx < plSecIdx,
+    'batch@' + batchIdx + ' channels@' + chSecIdx + ' plugins@' + plSecIdx
+  );
+  check('频道批量导入不再重复出现在系统设置', (adminClean.match(/批量导入频道/g) || []).length === 1);
+  check('子源行携带所属节点', admin.includes('parentId: p.id') && admin.includes('parentBase'));
+  check('子源停用集随配置读写', admin.includes('disabledPluginIds'));
   check('后台含前台访问密码开关', admin.includes('frontendAuthEnabled'));
   check('后台含密码哈希说明', admin.includes('PBKDF2'));
 

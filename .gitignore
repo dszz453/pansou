@@ -7,6 +7,9 @@ src/vendor.generated.ts
 # 工作区私有数据
 .workbuddy/
 
+# 交付产物（体检报告 / 清理后的清单等，只给用户看，不入库）
+outputs/
+
 # 一次性调试 / 探针脚本（保留在本地，不入库）
 build_tgtest.mjs
 build_defaults.mjs
@@ -81,6 +84,8 @@ live_p.html
 
 # 一次性探针脚本（临时创建、用完即删；含 API 令牌的脚本一律不进库）
 _*.mjs
+_*.txt
+_*.json
 cf_*.mjs
 cf_*.json
 deploy_preflight.json

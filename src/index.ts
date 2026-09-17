@@ -30,7 +30,7 @@ import {
   identifyCloudType,
   isNonResourceLink
 } from './parser';
-import { executePluginSearch } from './plugins';
+import { executePluginSearch, effectivePluginIds } from './plugins';
 import { runNativeSource } from './plugins/native';
 import { checkLinkValidity } from './checker';
 import { HTML_TEMPLATE } from './ui.html';
@@ -384,13 +384,19 @@ export default {
     if (path === '/api/health') {
       const settings = await getSystemSettings(env);
       const enabled = settings.channels.filter(c => c.enabled);
-      const enabledPlugins = settings.plugins.filter(p => p.enabled && p.apiEndpoint);
+      // V1.4：原生源没有 apiEndpoint，也是"插件"，判定启用不能只看 endpoint。
+      // （曾经这里只按 apiEndpoint 过滤，导致 3 个原生源全开时 health 仍报 plugins_enabled: 0，
+      //   和 /api/plugins 的 enabled 对不上，排查时白绕一圈。）
+      const enabledPlugins = settings.plugins.filter(
+        p => p.enabled && (p.type === 'native' || !!p.apiEndpoint)
+      );
+      const upstream = enabledPlugins.find(p => p.type !== 'native' && p.apiEndpoint);
       return jsonResponse({
         status: 'ok',
         version: APP_VERSION,
         version_label: APP_VERSION_LABEL,
         engine: 'native-tg+pansou-plugins',
-        upstream_node: enabledPlugins[0]?.apiEndpoint || null,
+        upstream_node: (upstream && upstream.apiEndpoint) || null,
         kv_bound: !!env.PANSOU_KV,
         channels_total: settings.channels.length,
         channels_enabled: enabled.length,
@@ -477,12 +483,23 @@ export default {
       const idsParam = url.searchParams.get('ids') || '';
       const rounds = Math.min(5, Math.max(1, parseInt(url.searchParams.get('rounds') || '1', 10) || 1));
 
+      // V1.4：插件源在后台是「一行 = 一个源」，第三方节点会被展开成一行一个子源。
+      // 所以这里既接受节点 id，也接受它名下任意 pluginId —— 否则用户在后台勾了
+      // 某几个子源来测，会因为对不上节点 id 而整个节点被过滤掉（表现为「没有匹配的插件」）。
+      const matches = (p: any, want: Set<string>) =>
+        want.has(p.id) || (Array.isArray(p.pluginIds) && p.pluginIds.some((x: string) => want.has(x)));
+
       let targets = settings.plugins.filter(p => p.enabled !== false);
+      // 子源被一个个关光的节点：没有请求的必要（与运行时的判定保持一致）
+      targets = targets.filter(
+        p => p.type === 'native' || !(p.pluginIds && p.pluginIds.length > 0) || effectivePluginIds(p).length > 0
+      );
       if (id) {
-        targets = targets.filter(p => p.id === id);
+        const want = new Set([id]);
+        targets = targets.filter(p => matches(p, want));
       } else if (idsParam) {
         const want = new Set(idsParam.split(',').map(s => s.trim()).filter(Boolean));
-        targets = targets.filter(p => want.has(p.id));
+        targets = targets.filter(p => matches(p, want));
       } else {
         targets = targets.filter(p => p.type === 'native' || !!p.apiEndpoint);
       }
@@ -522,7 +539,8 @@ export default {
 
         // 第三方节点：HTTP 抓取，可按 rounds 重试
         const base = (plugin.apiEndpoint || '').trim();
-        const pids = (plugin.pluginIds || []).filter(Boolean);
+        // 真正要请求的子源 = 全集 - 后台被单独关掉的
+        const pids = effectivePluginIds(plugin);
         const sep = base.includes('?') ? '&' : '?';
         const target =
           plugin.type === 'pansou'
@@ -576,6 +594,9 @@ export default {
           id: plugin.id,
           type: plugin.type,
           target,
+          // 一次请求覆盖了哪些子源（后台用来把「一次节点请求」解释清楚）
+          pluginIds: pids,
+          covered: pids.length,
           ok: !!last.ok,
           status: last.status,
           error: last.error,

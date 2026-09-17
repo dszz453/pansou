@@ -324,7 +324,7 @@ async function executePansouPlugin(
   const base = (plugin.apiEndpoint || '').replace(/\/+$/, '');
   if (!base) return [];
 
-  const url = `${base}?kw=${encodeURIComponent(keyword)}&res=merge&src=all`;
+  let url = `${base}?kw=${encodeURIComponent(keyword)}&res=merge&src=all`;
 
   const headers: Record<string, string> = {
     'User-Agent': BROWSER_UA,
@@ -333,8 +333,15 @@ async function executePansouPlugin(
     ...(plugin.headers || {})
   };
 
+  // 子源过滤必须走 `plugins=` 查询参数。
+  // 实测（2026-09）：聚合节点会**完全忽略** `X-Plugins` 请求头，
+  // 只认 url 上的 `plugins=id1,id2`；不带该参数时节点回它自带的全部源。
+  // 这里用 effectivePluginIds 剔掉被单独关掉的子源，后台的复选框才是真开关。
   if (plugin.pluginIds && plugin.pluginIds.length > 0) {
-    headers['X-Plugins'] = plugin.pluginIds.join(',');
+    const ids = effectivePluginIds(plugin);
+    if (ids.length > 0) {
+      url += `&plugins=${encodeURIComponent(ids.join(','))}`;
+    }
   }
 
   const res = await fetchWithRetry(url, { method: 'GET', headers }, budgetMs);
@@ -376,6 +383,21 @@ async function executePansouPlugin(
   }
 }
 
+/**
+ * 节点本次实际要请求的子源列表。
+ *
+ * `pluginIds` = 节点名下**全部**子源（后台要按它回显成一行一行）；
+ * `disabledPluginIds` = 其中被单独取消勾选的。
+ * 发请求前要把后者剔掉，否则后台那个子源复选框就只是摆设 ——
+ * 用户关掉一个源，节点请求却照样把它带上去，等于没关。
+ */
+export function effectivePluginIds(plugin: PluginConfig): string[] {
+  const all = (plugin.pluginIds || []).filter(Boolean);
+  if (all.length === 0) return [];
+  const off = new Set((plugin.disabledPluginIds || []).filter(Boolean));
+  return all.filter(id => !off.has(id));
+}
+
 /** 插件搜索入口：按插件类型分发执行 */
 export async function executePluginSearch(
   plugin: PluginConfig,
@@ -391,6 +413,11 @@ export async function executePluginSearch(
 
   if (plugin.type === 'custom') {
     return executeCustomApiPlugin(plugin, keyword, budgetMs);
+  }
+
+  // 第三方节点：子源被一个个关光后就没有请求的必要了（省一次 HTTP 与超时等待）
+  if ((plugin.pluginIds || []).length > 0 && effectivePluginIds(plugin).length === 0) {
+    return [];
   }
   return executePansouPlugin(plugin, keyword, budgetMs);
 }
