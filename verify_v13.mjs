@@ -17,7 +17,14 @@
  * 否则模块内的 settingsCache（60 秒 TTL）会把上一个场景的配置带过来。
  */
 
+import { readFile } from 'node:fs/promises';
+
 const BASE = 'https://pansou.dszz.us.ci';
+
+/** 期望版本号读 package.json，发版时不用回来改断言（version.ts 是运行时唯一来源） */
+const PKG = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'));
+const EXPECT_VERSION = PKG.version;
+const EXPECT_LABEL = 'V' + EXPECT_VERSION.replace(/\.\d+$/, '');
 let seq = 0;
 
 const loadWorker = async () => (await import('./dist/worker.js?case=' + ++seq)).default;
@@ -104,7 +111,7 @@ async function scenePages() {
 
   const admin = await (await get(worker, env, '/admin')).text();
   check('后台 200', admin.length > 1000);
-  check('后台版本号 V1.3', admin.includes('V1.3'));
+  check('后台含版本号 ' + EXPECT_LABEL, admin.includes(EXPECT_LABEL));
   check('后台新增「API 接口」Tab', admin.includes("key: 'api'") && admin.includes('API 接口'));
   check('后台含接口文档数据', admin.includes('apiGroups') && admin.includes('/api/frontend/auth'));
   check('后台插件区已删除接口地址字段', !admin.includes('v-model="pl.apiEndpoint"'));
@@ -114,7 +121,11 @@ async function scenePages() {
   check('后台含密码哈希说明', admin.includes('PBKDF2'));
 
   const health = await (await get(worker, env, '/api/health')).json();
-  check('health 版本 V1.3', health.version_label === 'V1.3', health.version);
+  check(
+    'health 版本与 package.json 一致',
+    health.version_label === EXPECT_LABEL && health.version === EXPECT_VERSION,
+    health.version + ' / ' + health.version_label
+  );
   check('health 暴露前台开关状态', health.frontend_auth_enabled === false);
   check('health 暴露凭据存储方式', health.credentials_hashed === false, String(health.credentials_hashed));
 }
@@ -191,17 +202,19 @@ async function scenePlugins() {
   const kv = makeKV();
   const env = { PANSOU_KV: kv };
 
-  // 保存：只启用两个源 + 一条备注
+  // 保存：两个原生源启用 + 一个第三方节点停用 + 一条备注
   let r = await post(
     worker,
     env,
     '/api/admin/settings',
     {
       plugins: [
+        { id: 'melost', name: '影盘社', enabled: true, type: 'native' },
+        { id: 'ouge', name: '欧格资源', enabled: true, type: 'native' },
         {
           id: 'pansou_aggregate',
           name: 'PanSou 聚合节点',
-          enabled: true,
+          enabled: false,
           type: 'pansou',
           apiEndpoint: 'https://example.com/api/search',
           pluginIds: ['hunhepan', 'clxiong']
@@ -214,21 +227,36 @@ async function scenePlugins() {
   check('保存插件源配置成功', r.status === 200 && (await r.json()).code === 0);
 
   const saved = JSON.parse(kv.store.get(SETTINGS_KEY));
-  check('已启用源写入 pluginIds', JSON.stringify(saved.plugins[0].pluginIds) === '["hunhepan","clxiong"]');
+  // V1.4：原生源各自独立成条；第三方节点保留自己的 apiEndpoint / pluginIds。
+  // 提交顺序与落盘顺序必须一致 —— 若迁移在保存路径上又跑了一次，
+  // 这里会看到原生源被补齐、聚合节点被强制停用，用户的显式选择被覆盖。
+  check(
+    '插件提交顺序原样落盘（迁移未在保存路径重跑）',
+    JSON.stringify(saved.plugins.map(p => p.id)) === '["melost","ouge","pansou_aggregate"]',
+    JSON.stringify(saved.plugins.map(p => p.id))
+  );
+  check('原生源按条目独立落盘', saved.plugins.filter(p => p.type === 'native').length === 2);
+  check('第三方节点保留 pluginIds', JSON.stringify(saved.plugins[2].pluginIds) === '["hunhepan","clxiong"]');
   check('源备注写入 pluginSourceLabels', saved.pluginSourceLabels.clxiong === '磁力熊');
 
   const plugins = await (await get(worker, env, '/api/plugins')).json();
-  check('/api/plugins 返回启用源', plugins.enabled === 1 && plugins.plugins[0].pluginIds.length === 2);
+  // 原生源没有 apiEndpoint，判定「启用」时不能只看 endpoint
+  check(
+    '/api/plugins 返回启用的原生源',
+    plugins.enabled === 2 && plugins.plugins.filter(p => p.type === 'native').length === 2,
+    'enabled=' + plugins.enabled
+  );
   check('/api/plugins 带出备注映射', plugins.plugins[0].pluginLabels.clxiong === '磁力熊');
   check('/api/plugins 不再外泄节点地址', !('apiEndpoint' in plugins.plugins[0]), Object.keys(plugins.plugins[0]).join(','));
 
-  // 全部关闭 → 节点整体停用
+  // 全部关闭 → 没有任何启用源
   await post(
     worker,
     env,
     '/api/admin/settings',
     {
       plugins: [
+        { id: 'melost', name: '影盘社', enabled: false, type: 'native' },
         {
           id: 'pansou_aggregate',
           name: 'PanSou 聚合节点',
@@ -424,12 +452,26 @@ async function sceneCompat() {
   check('升级前 health 前台开关为关', healthBefore.frontend_auth_enabled === false);
 
   const s = await (await get(worker, env, '/api/admin/settings', 'old-plain')).json();
-  check('旧配置可正常读取', s.plugins.length === 1 && s.plugins[0].pluginIds.length === 3);
+  // V1.4 迁移：老配置（只有第三方聚合节点）读出来时会补入原生源，并把聚合节点停用。
+  // 只在「KV 里真的存着老配置」时触发一次 —— 保存路径不会重跑（出厂默认值已带版本号）。
+  const agg = (s.plugins || []).find(p => p.id === 'pansou_aggregate') || {};
+  const natives = (s.plugins || []).filter(p => p.type === 'native');
+  check(
+    '旧配置补入 3 个原生源且默认启用',
+    natives.length === 3 && natives.every(p => p.enabled !== false),
+    JSON.stringify((s.plugins || []).map(p => p.id))
+  );
+  check('旧配置的聚合节点被停用（搜索不再依赖第三方）', agg.enabled === false);
+  check('聚合节点原有 pluginIds 未被丢弃', (agg.pluginIds || []).length === 3);
   check('旧配置缺省字段补全', s.frontendAuthEnabled === false && s.frontendPasswordMode === 'reuse');
-  check('节点地址仍在（后台不展示但保存时保留）', s.plugins[0].apiEndpoint === 'https://so.252035.xyz/api/search');
+  check('节点地址仍在（后台不展示但保存时保留）', agg.apiEndpoint === 'https://so.252035.xyz/api/search');
 
   const plugins = await (await get(worker, env, '/api/plugins')).json();
-  check('旧配置的插件源正常暴露', plugins.plugins[0].pluginIds.length === 3);
+  check(
+    '旧配置的插件源正常暴露（只剩 3 个原生源）',
+    plugins.enabled === 3 && plugins.plugins.every(p => p.type === 'native'),
+    'enabled=' + plugins.enabled
+  );
   const health = await (await get(worker, env, '/api/health')).json();
   check('登录一次后 health 转为「已哈希」', health.credentials_hashed === true);
   check('旧配置健康检查正常', health.status === 'ok' && health.channels_enabled === 1);

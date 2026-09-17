@@ -71,19 +71,26 @@ export interface PluginResponseMapping {
 /**
  * 搜索插件配置
  *
+ * - type = 'native'（V1.4 起默认）：**在 Worker 内部直接抓取**资源站，
+ *   实现见 `src/plugins/native.ts`。`id` 必须是已注册的原生源 id。
+ *   不依赖任何第三方聚合节点，是「不依赖 so.252035.xyz」改造后的主力路径。
  * - type = 'pansou'：调用任意「pansou 兼容」的 `/api/search` 节点，
- *   通过 `plugins=id1,id2` 指定远端启用哪些子插件（默认节点聚合了 89 个源）。
+ *   通过 `plugins=id1,id2` 指定远端启用哪些子插件。默认配置里已置为**停用**。
  * - type = 'custom'：调用任意 REST API，用 responseMapping 做字段映射。
  */
 export interface PluginConfig {
   id: string;
   name: string;
   enabled: boolean;
-  type: 'pansou' | 'custom';
-  /** pansou 类型填到 /api/search；custom 类型可用 {keyword} 占位 */
-  apiEndpoint: string;
+  type: 'native' | 'pansou' | 'custom';
+  /** native 类型不需要填（实现内置）；pansou 类型填到 /api/search；custom 类型可用 {keyword} 占位 */
+  apiEndpoint?: string;
   /** 仅 pansou 类型：远端要启用的插件 id 列表 */
   pluginIds?: string[];
+  /** 原生源的中文说明（仅 native 类型，用于后台展示） */
+  desc?: string;
+  /** 排序权重，越小越先被调用（前端分批调度时用） */
+  priority?: number;
   /** 自定义请求头（如 Authorization） */
   headers?: Record<string, string>;
   method?: 'GET' | 'POST';
@@ -148,6 +155,13 @@ export interface SystemSettings {
    * 内置源清单只有英文 id（如 `jsnoteclub`、`mizixing`），后台可选填中文备注方便辨认。
    */
   pluginSourceLabels?: Record<string, string>;
+  /**
+   * 插件引擎版本（V1.4 新增，用于一次性迁移）。
+   *
+   * 缺失或 < 2 表示还是「单靠第三方聚合节点」的老配置：读取时会自动补上原生源、
+   * 并把聚合节点停用。写入 2 之后就不再干预，用户在后台怎么改都保留。
+   */
+  pluginEngineVersion?: number;
 
   /* ---------------- 前台访问密码（V1.3 新增） ---------------- */
   /** 是否要求访客先输入密码才能搜索 */

@@ -12,7 +12,18 @@
  *   4. 网盘展示可配置   → /api/ui-config 的白名单与中文名映射
  *   5. 版本 V1.2       → 页面标题 / health / ui-config 三处版本一致
  */
+import { readFile } from 'node:fs/promises';
+
 const BASE = (process.argv[2] || process.env.BASE || 'http://127.0.0.1:8787').replace(/\/$/, '');
+
+/**
+ * 期望版本号：直接读 package.json，避免每次发版都要回来改这些断言。
+ * 运行时唯一来源是 src/version.ts，发版时两个文件必须一起改 ——
+ * 这里改成「读 package.json」正是为了让漏改时立刻暴露（版本对不上就红）。
+ */
+const PKG = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'));
+const EXPECT_VERSION = PKG.version;
+const EXPECT_LABEL = 'V' + EXPECT_VERSION.replace(/\.\d+$/, '');
 
 /** 带重试的取数：沙箱代理对部分域名会间歇性失败 */
 const req = async (path, opt = {}, tries = 6) => {
@@ -42,8 +53,12 @@ console.log(`\n══════════ V1.2 特性回归 · ${BASE} ═�
 console.log('\n【1. 版本号 V1.2（三处一致）】');
 const health = await req('/api/health');
 const h = health ? JSON.parse(health.t) : {};
-check('页面标题含 V1.2', true, '（见下方首页检查）');
-check('/api/health 版本', h.version === '1.2.0' && h.version_label === 'V1.2', h.version + ' / ' + h.version_label);
+check('页面标题含版本号', true, '（见下方首页检查）');
+check(
+  '/api/health 版本',
+  h.version === EXPECT_VERSION && h.version_label === EXPECT_LABEL,
+  h.version + ' / ' + h.version_label + '（期望 ' + EXPECT_VERSION + ' / ' + EXPECT_LABEL + '）'
+);
 
 /* ---------- 2. KV 配额优化 ---------- */
 console.log('\n【2. KV 配额优化（搜索结果不入库）】');
@@ -59,7 +74,7 @@ console.log('\n【3. 首页：PWA / 移动端 / 后台已迁出】');
 const home = await req('/');
 const html = home ? home.t : '';
 check('首页 200', !!home && home.r.status === 200, home ? String(home.r.status) : '-');
-check('标题含 V1.2', /V1\.2/.test(html));
+check('标题含版本号 ' + EXPECT_LABEL, html.includes(EXPECT_LABEL));
 check('后台弹窗已移除', !/showAdminModal|showBatchModal/.test(html));
 check('接入 Manifest', /manifest\.webmanifest/.test(html));
 check('接入 favicon / touch-icon', /assets\/favicon\.svg/.test(html) && /assets\/icon\.svg/.test(html));

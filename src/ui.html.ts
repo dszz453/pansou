@@ -802,12 +802,22 @@ ${CLOUD_BADGE_CSS}
             }
             const all = (cachedChannelsInfo && cachedChannelsInfo.channels) || [];
             const size = (cachedChannelsInfo && cachedChannelsInfo.shard_size) || 8;
-            const pluginCount = ((cachedPluginsInfo && cachedPluginsInfo.plugins) || []).length;
+            const pluginIds = ((cachedPluginsInfo && cachedPluginsInfo.plugins) || [])
+              .map(p => p && p.id)
+              .filter(Boolean);
 
             const shards = [];
             for (let i = 0; i < all.length; i += size) shards.push(all.slice(i, i + size));
 
-            searchProgress.value = { done: 0, total: shards.length + (pluginCount > 0 ? 1 : 0) };
+            // 插件（原生源）同样要分片：每个源都是一次独立的外部 HTTP 抓取，
+            // 全塞进一个请求会撞上 Workers 的子请求/CPU 上限，前面的源超时后面的就再也跑不到。
+            const PLUGIN_SHARD_SIZE = 3;
+            const pluginShards = [];
+            for (let i = 0; i < pluginIds.length; i += PLUGIN_SHARD_SIZE) {
+              pluginShards.push(pluginIds.slice(i, i + PLUGIN_SHARD_SIZE));
+            }
+
+            searchProgress.value = { done: 0, total: shards.length + pluginShards.length };
 
             // 频道分片任务
             const shardTask = async () => {
@@ -837,22 +847,32 @@ ${CLOUD_BADGE_CSS}
               );
             };
 
-            // 插件任务
+            // 插件任务（按片并发）
             const pluginTask = async () => {
-              if (pluginCount === 0) return;
-              try {
-                const r = await apiFetch('/api/search', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ kw, plugins_only: true, res: 'merge' })
-                });
-                const d = await r.json();
-                mergeInto(d.merged_by_type || {});
-                commit();
-              } catch (e) {
-                console.warn('插件检索失败', e);
-              }
-              bump();
+              if (pluginShards.length === 0) return;
+              let cursor = 0;
+              const worker = async () => {
+                while (true) {
+                  const idx = cursor++;
+                  if (idx >= pluginShards.length) return;
+                  try {
+                    const r = await apiFetch('/api/search', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ kw, plugins: pluginShards[idx], res: 'merge' })
+                    });
+                    const d = await r.json();
+                    mergeInto(d.merged_by_type || {});
+                    commit();
+                  } catch (e) {
+                    console.warn('插件分片检索失败', pluginShards[idx], e);
+                  }
+                  bump();
+                }
+              };
+              await Promise.all(
+                new Array(Math.min(SHARD_CONCURRENCY, pluginShards.length)).fill(0).map(worker)
+              );
             };
 
             await Promise.all([shardTask(), pluginTask()]);

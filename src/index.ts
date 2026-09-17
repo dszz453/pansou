@@ -31,6 +31,7 @@ import {
   isNonResourceLink
 } from './parser';
 import { executePluginSearch } from './plugins';
+import { runNativeSource } from './plugins/native';
 import { checkLinkValidity } from './checker';
 import { HTML_TEMPLATE } from './ui.html';
 import { ADMIN_TEMPLATE } from './admin.ui';
@@ -51,13 +52,22 @@ const MAX_CHANNELS_PER_CALL = 10;
 const PER_CHANNEL_TIMEOUT_MS = 9000;
 
 /**
- * 单个插件调用超时。
- * 插件背后是一个聚合节点（内部要跑几十个子插件），比单个 TG 频道慢得多。
- * 实测节点在 Worker 侧最慢一次耗时 13.3 秒才返回，因此给到 18 秒 ——
- * 插件的整体搜索由前端**单独发一个请求**，与频道分片并行、渐进式渲染，
- * 所以这里放宽超时不会阻塞频道结果的展示。
+ * 单个插件源调用的超时预算。
+ *
+ * 两类源都比单个 TG 频道慢得多：外部聚合节点要在内部跑几十个子插件（实测最慢 13.3 秒），
+ * 原生源要串行翻好几页（影盘社 8 页约 6~8 秒）。因此统一给到 18 秒 ——
+ * 插件结果由前端**单独发请求**、与频道分片并行并渐进式渲染，
+ * 所以放宽超时不会阻塞频道结果的展示。
  */
 const PER_PLUGIN_TIMEOUT_MS = 18000;
+
+/**
+ * 单次调用里并行跑几个插件源。
+ * V1.4 起插件源大多是原生抓取（每个源打的是不同站点），彼此独立，
+ * 并行跑的总耗时约等于「最慢的那个源」，串行则要把每个源的耗时相加。
+ * 上限 3 是为了和前端的分片大小一致，同时避免和频道抓取抢 6 条并发连接。
+ */
+const PLUGIN_CONCURRENCY = 3;
 
 /** 插件结果「新鲜」时长（秒）：在这个窗口内直接命中缓存，不再打节点 */
 const PLUGIN_CACHE_TTL = 1800;
@@ -321,7 +331,7 @@ export default {
       // 插件源开关同样是后台配置，且这个接口会带出源备注名 —— 一并直读 KV
       const settings = await getSystemSettingsFresh(env);
       if (!(await requireFrontendAccess(request, env, settings))) return unauthorizedResponse();
-      const enabled = settings.plugins.filter(p => p.enabled && p.apiEndpoint);
+      const enabled = settings.plugins.filter(p => p.enabled && (p.type === 'native' || !!p.apiEndpoint));
       return jsonResponse(
         {
           code: 0,
@@ -456,79 +466,132 @@ export default {
       }
     }
 
-    // 4.6 插件诊断 /api/debug/plugin —— 查看 Worker 侧调用插件节点时的真实状态码/耗时
+    // 4.6 插件诊断 /api/debug/plugin —— 查看 Worker 侧调用插件源时的真实状态码/耗时
+    //     V1.4：支持 ?id=单源 / ?ids=a,b,c 多源。原生源（type='native'）直接跑 Worker 内引擎，
+    //     第三方节点走 HTTP 抓取。返回逐源的耗时与条数，后台「测试」按钮据此展示。
     if (path === '/api/debug/plugin') {
       const settings = await getSystemSettings(env);
       if (!(await requireFrontendAccess(request, env, settings))) return unauthorizedResponse();
       const kw = url.searchParams.get('kw') || '流浪地球';
       const id = url.searchParams.get('id') || '';
       const idsParam = url.searchParams.get('ids') || '';
-      const rounds = Math.min(5, Math.max(1, parseInt(url.searchParams.get('rounds') || '3', 10) || 3));
+      const rounds = Math.min(5, Math.max(1, parseInt(url.searchParams.get('rounds') || '1', 10) || 1));
 
-      const targets = id
-        ? settings.plugins.filter(p => p.id === id)
-        : settings.plugins.filter(p => p.enabled && p.apiEndpoint);
+      let targets = settings.plugins.filter(p => p.enabled !== false);
+      if (id) {
+        targets = targets.filter(p => p.id === id);
+      } else if (idsParam) {
+        const want = new Set(idsParam.split(',').map(s => s.trim()).filter(Boolean));
+        targets = targets.filter(p => want.has(p.id));
+      } else {
+        targets = targets.filter(p => p.type === 'native' || !!p.apiEndpoint);
+      }
 
       if (targets.length === 0) {
         return jsonResponse({ ok: false, message: '没有匹配的插件', plugins: settings.plugins.map(p => p.id) });
       }
 
-      const plugin = targets[0]!;
-      const base = (plugin.apiEndpoint || '').trim();
-      const ids = (plugin.pluginIds || []).filter(Boolean);
-      const sep = base.includes('?') ? '&' : '?';
-      const target =
-        plugin.type === 'pansou'
-          ? `${base}${sep}kw=${encodeURIComponent(kw)}&res=merge${ids.length ? `&plugins=${encodeURIComponent(ids.join(','))}` : ''}`
-          : base.replace(/\{keyword\}/g, encodeURIComponent(kw));
+      const results: any[] = [];
 
-      const attempts: any[] = [];
-      for (let i = 0; i < rounds; i++) {
-        const t0 = Date.now();
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), PER_PLUGIN_TIMEOUT_MS);
-        try {
-          const r = await fetch(target, {
-            headers: {
-              'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-              Accept: 'application/json, text/plain, */*'
-            },
-            signal: controller.signal
-          });
-          clearTimeout(timer);
-          const text = await r.text();
-          let total: any = null;
+      for (const plugin of targets) {
+        // 原生源：跑 Worker 内引擎，一次即可（引擎内部已含翻页与逐请求超时）
+        if (plugin.type === 'native') {
+          const t0 = Date.now();
           try {
-            const j = JSON.parse(text);
-            const p = j.data && (j.data.merged_by_type || j.data.results) ? j.data : j;
-            total = p.total != null ? p.total : Object.keys(p.merged_by_type || {}).length;
-          } catch (e) {}
-          attempts.push({
-            try: i + 1,
-            status: r.status,
-            ok: r.ok,
-            ms: Date.now() - t0,
-            bytes: text.length,
-            total,
-            head: text.slice(0, 160)
-          });
-        } catch (e: any) {
-          clearTimeout(timer);
-          attempts.push({
-            try: i + 1,
-            error: String((e && e.name) || '') + ': ' + String((e && e.message) || e),
-            ms: Date.now() - t0
-          });
+            const items = await runNativeSource(plugin.id, kw, PER_PLUGIN_TIMEOUT_MS);
+            results.push({
+              id: plugin.id,
+              type: 'native',
+              ok: true,
+              status: 200,
+              ms: Date.now() - t0,
+              total: items.length
+            });
+          } catch (e: any) {
+            results.push({
+              id: plugin.id,
+              type: 'native',
+              ok: false,
+              error: String((e && e.name) || '') + ': ' + String((e && e.message) || e),
+              ms: Date.now() - t0,
+              total: 0
+            });
+          }
+          continue;
         }
-        if (i < rounds - 1) await new Promise(res => setTimeout(res, 800));
+
+        // 第三方节点：HTTP 抓取，可按 rounds 重试
+        const base = (plugin.apiEndpoint || '').trim();
+        const pids = (plugin.pluginIds || []).filter(Boolean);
+        const sep = base.includes('?') ? '&' : '?';
+        const target =
+          plugin.type === 'pansou'
+            ? `${base}${sep}kw=${encodeURIComponent(kw)}&res=merge${pids.length ? `&plugins=${encodeURIComponent(pids.join(','))}` : ''}`
+            : base.replace(/\{keyword\}/g, encodeURIComponent(kw));
+
+        const attempts: any[] = [];
+        for (let i = 0; i < rounds; i++) {
+          const t0 = Date.now();
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), PER_PLUGIN_TIMEOUT_MS);
+          try {
+            const r = await fetch(target, {
+              headers: {
+                'User-Agent':
+                  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                Accept: 'application/json, text/plain, */*'
+              },
+              signal: controller.signal
+            });
+            clearTimeout(timer);
+            const text = await r.text();
+            let total: any = null;
+            try {
+              const j = JSON.parse(text);
+              const p = j.data && (j.data.merged_by_type || j.data.results) ? j.data : j;
+              total = p.total != null ? p.total : Object.keys(p.merged_by_type || {}).length;
+            } catch (e) {}
+            attempts.push({
+              try: i + 1,
+              status: r.status,
+              ok: r.ok,
+              ms: Date.now() - t0,
+              bytes: text.length,
+              total,
+              head: text.slice(0, 160)
+            });
+          } catch (e: any) {
+            clearTimeout(timer);
+            attempts.push({
+              try: i + 1,
+              error: String((e && e.name) || '') + ': ' + String((e && e.message) || e),
+              ms: Date.now() - t0
+            });
+          }
+          if (i < rounds - 1) await new Promise(res => setTimeout(res, 800));
+        }
+
+        const last = attempts[attempts.length - 1] || {};
+        results.push({
+          id: plugin.id,
+          type: plugin.type,
+          target,
+          ok: !!last.ok,
+          status: last.status,
+          error: last.error,
+          ms: last.ms,
+          total: last.total != null ? last.total : null,
+          attempts
+        });
       }
 
       return jsonResponse({
-        plugin: { id: plugin.id, type: plugin.type, endpoint: base, pluginIds: ids.length },
+        ok: results.some(r => r.ok),
         keyword: kw,
-        target,
-        attempts
+        // 兼容旧字段（旧的单源诊断前端）
+        plugin: results[0] ? { id: results[0].id, type: results[0].type } : null,
+        attempts: (results[0] && results[0].attempts) || [results[0]].filter(Boolean),
+        results
       });
     }
 
@@ -819,7 +882,9 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
       targetChannels.push(name);
     }
     targetChannels = targetChannels.slice(0, MAX_CHANNELS_PER_CALL);
-  } else if (pluginsOnly) {
+  } else if (pluginsOnly || customPlugins.length > 0) {
+    // 插件专用请求：整批 plugins_only，或前端按片显式指定 plugins。
+    // 这两种情况都不该顺带跑频道——否则插件分片会把频道重复搜 N 遍。
     targetChannels = [];
   } else {
     // 未指定：按优先级取前 N 个（默认上限来自设置，且不超过单次调用预算）
@@ -838,9 +903,13 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
   // 关键约定：**只在「客户端显式指定了 channels」之外**才跑插件。
   // 前端分片调度时会为每个分片都显式带上 channels，如果每个分片都触发插件调用，
   // 一次搜索就会把插件打 18 遍；因此改成由前端单独发一次 plugins_only 请求。
-  const allEnabledPlugins = settings.plugins.filter(p => p.enabled && p.apiEndpoint);
+  // 原生源（type='native'）没有 apiEndpoint，判定可用性时不能只看 endpoint
+  const allEnabledPlugins = settings.plugins.filter(
+    p => p.enabled && (p.type === 'native' || !!p.apiEndpoint)
+  );
 
   let targetPlugins = allEnabledPlugins;
+  let explicitPlugins = false;
   if (noPlugins) {
     targetPlugins = [];
   } else if (customPlugins.length > 0) {
@@ -848,13 +917,18 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
     targetPlugins = allEnabledPlugins.filter(
       p => want.has(p.id.toLowerCase()) || want.has((p.name || '').toLowerCase())
     );
+    explicitPlugins = true;
   } else if (customChannels.length > 0 && !pluginsOnly) {
     // 频道分片请求：不带插件
     targetPlugins = [];
   }
 
-  const pluginCap = Math.max(1, settings.maxPluginsPerSearch || DEFAULT_MAX_PLUGINS);
-  targetPlugins = targetPlugins.slice(0, pluginCap);
+  // 显式指定的分片不受并发上限约束——上限是给「未指定」时的默认兜底用的，
+  // 前端已经按 maxPluginsPerSearch 切好片，这里再截一刀会让后面的源永远跑不到。
+  if (!explicitPlugins) {
+    const pluginCap = Math.max(1, settings.maxPluginsPerSearch || DEFAULT_MAX_PLUGINS);
+    targetPlugins = targetPlugins.slice(0, pluginCap);
+  }
 
   if (targetChannels.length === 0 && targetPlugins.length === 0) {
     return formatSearchResponse(
@@ -1095,7 +1169,10 @@ async function handleSearch(request: Request, env: Env, ctx: ExecutionContext): 
     ),
     runWithConcurrency(
       targetPlugins.map(p => () => loadPlugin(p)),
-      Math.min(DEFAULT_MAX_PLUGINS, Math.max(1, targetPlugins.length))
+      // 原生源之间互不干扰（各自打不同的站点），并发跑完只需「最慢的那个」的时间；
+      // 串起来则要把每个源的耗时相加，很容易撞上 18s 的单源预算。
+      // 上限对齐前端的分片大小（3），再高就会和频道抓取抢 Cloudflare 的 6 连接预算。
+      Math.min(PLUGIN_CONCURRENCY, Math.max(1, targetPlugins.length))
     )
   ]);
 

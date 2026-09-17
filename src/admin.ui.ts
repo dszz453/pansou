@@ -12,16 +12,17 @@
 import { VENDOR_VERSION } from './vendor.generated';
 import { ICONS_CSS } from './icons';
 import { CLOUD_BADGE_CSS, CLOUD_TYPES } from './cloud';
-import { APP_VERSION_LABEL, APP_NAME } from './version';
-import { ALL_PLUGIN_IDS, DEFAULT_PLUGINS } from './defaults';
+import { APP_VERSION, APP_VERSION_LABEL, APP_NAME } from './version';
+import { DEFAULT_PLUGINS } from './defaults';
 
 /**
- * V1.3：插件改为「按源逐行开关」。
- * 内置聚合节点背后是 89 个第三方资源站抓取源，过去被打包成一条「插件」配置，
- * 后台只能整条启停；现在把源清单注入页面，每个源一行、各自独立开关。
- * 保存时再把勾选结果合并回一条聚合节点配置（一次请求带全部已启用源）。
+ * V1.4：插件源管理改为「一行 = 一个插件条目」。
+ *
+ * V1.3 及以前，内置插件是「一条聚合节点配置 + 89 个第三方子源 id」的结构，
+ * 后台只能整条启停，子源开关形同虚设（节点一次性抓全部）。
+ * V1.4 起搜索不再依赖第三方聚合节点：Worker 内直接实现原生抓取源（type='native'），
+ * 每个源 = 一次独立的抓取，因此后台可以逐个开关、逐个看结果。
  */
-const PLUGIN_SOURCES_JSON = JSON.stringify(ALL_PLUGIN_IDS);
 
 /** 插件配置被清空时的兜底聚合节点地址（正常流程下沿用 KV 里已存的地址） */
 const FALLBACK_PLUGIN_ENDPOINT = (DEFAULT_PLUGINS[0] && DEFAULT_PLUGINS[0].apiEndpoint) || '';
@@ -106,15 +107,18 @@ const API_GROUPS_JSON = JSON.stringify([
         method: 'GET',
         path: '/api/plugins',
         summary: '启用中的插件源',
+        desc: 'V1.4 起插件源分两类：type="native" 由 Worker 直接抓取（不依赖第三方站点），type="pansou" 走外部聚合节点。',
         req: '无',
         resp:
           '{\n' +
           '  "code": 0,\n' +
-          '  "total": 1,\n' +
-          '  "enabled": 1,\n' +
+          '  "total": 4,\n' +
+          '  "enabled": 3,\n' +
           '  "plugins": [\n' +
-          '    { "id": "pansou_aggregate", "name": "PanSou 聚合节点", "type": "pansou",\n' +
-          '      "pluginIds": ["hunhepan", "jikepan", "..."], "pluginLabels": { "clxiong": "磁力熊" } }\n' +
+          '    { "id": "melost",   "name": "Melost 网盘搜索", "type": "native", "desc": "JSON 接口，支持多网盘" },\n' +
+          '    { "id": "ouge",     "name": "欧哥影视（苹果CMS）", "type": "native" },\n' +
+          '    { "id": "quark4k",  "name": "夸克4K（Flarum 论坛）", "type": "native" },\n' +
+          '    { "id": "pansou_aggregate", "name": "PanSou 聚合节点", "type": "pansou", "enabled": false }\n' +
           '  ]\n' +
           '}'
       },
@@ -134,8 +138,8 @@ const API_GROUPS_JSON = JSON.stringify([
         resp:
           '{\n' +
           '  "code": 0,\n' +
-          '  "version": "1.3.0",\n' +
-          '  "version_label": "V1.3",\n' +
+          '  "version": "' + APP_VERSION + '",\n' +
+          '  "version_label": "' + APP_VERSION_LABEL + '",\n' +
           '  "app_name": "PanSou Edge",\n' +
           '  "visible_cloud_types": ["quark", "aliyun", "baidu"],\n' +
           '  "cloud_labels": { "quark": "夸克网盘", "aliyun": "阿里云盘" },\n' +
@@ -152,8 +156,8 @@ const API_GROUPS_JSON = JSON.stringify([
         resp:
           '{\n' +
           '  "status": "ok",\n' +
-          '  "version": "1.3.0",\n' +
-          '  "version_label": "V1.3",\n' +
+          '  "version": "' + APP_VERSION + '",\n' +
+          '  "version_label": "' + APP_VERSION_LABEL + '",\n' +
           '  "kv_bound": true,\n' +
           '  "channels_enabled": 143,\n' +
           '  "plugins_enabled": 1,\n' +
@@ -224,9 +228,9 @@ const API_GROUPS_JSON = JSON.stringify([
         method: 'GET',
         path: '/api/admin/defaults',
         summary: '出厂配置',
-        desc: '回传内置的全部 TG 频道与默认插件节点，供后台「恢复出厂配置」使用。需管理员密码。',
+        desc: '回传内置的全部 TG 频道与默认插件源（原生源默认启用、第三方聚合节点默认停用），供后台「恢复出厂配置」使用。需管理员密码。',
         req: '无',
-        resp: '{ "channels": [ /* 143 个频道 */ ], "plugins": [ /* 聚合节点 */ ], "hotSearches": [ "...", ] }'
+        resp: '{ "channels": [ /* 143 个频道 */ ], "plugins": [ /* 原生源 + 聚合节点 */ ], "hotSearches": [ "...", ] }'
       }
     ]
   },
@@ -242,7 +246,7 @@ const API_GROUPS_JSON = JSON.stringify([
         req: '无',
         resp:
           '{\n' +
-          '  "version": "1.3.0",\n' +
+          '  "version": "' + APP_VERSION + '",\n' +
           '  "result_cache_mode": "memory",\n' +
           '  "kv_bound": true,\n' +
           '  "memory_cache": { "settings": 1, "channels": 12, "feeds": 8, "plugins": 1, "checks": 0 },\n' +
@@ -252,9 +256,17 @@ const API_GROUPS_JSON = JSON.stringify([
       {
         method: 'GET',
         path: '/api/debug/plugin',
-        summary: '插件节点连通诊断',
-        req: '?kw=流浪地球&rounds=3&id=hunhepan,jikepan（id 可选，缺省用全部已启用源）',
-        resp: '{ "attempts": [ { "ok": true, "status": 200, "ms": 4210, "total": 88 } ] }'
+        summary: '插件源连通诊断',
+        desc: 'V1.4：原生源直接跑 Worker 内引擎，第三方节点走 HTTP 抓取；返回逐源结果，便于定位是哪个源挂了。',
+        req: '?kw=流浪地球&id=melost 或 ?ids=melost,ouge,quark4k（缺省测全部已启用源）；rounds 仅对第三方节点生效',
+        resp:
+          '{\n' +
+          '  "ok": true,\n' +
+          '  "results": [\n' +
+          '    { "id": "melost", "type": "native", "ok": true, "status": 200, "ms": 1860, "total": 7880 },\n' +
+          '    { "id": "ouge",   "type": "native", "ok": true, "status": 200, "ms": 940,  "total": 42 }\n' +
+          '  ]\n' +
+          '}'
       },
       {
         method: 'GET',
@@ -583,7 +595,7 @@ ${CLOUD_BADGE_CSS}
           </div>
         </section>
 
-        <!-- ---------------- 插件（V1.3：按源逐行开关） ---------------- -->
+        <!-- ---------------- 插件（V1.4：一行 = 一个插件源，原生源各自独立抓取） ---------------- -->
         <section v-if="activeTab === 'plugins'" class="space-y-3">
           <!-- 工具栏 -->
           <div class="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 flex flex-wrap items-center gap-2">
@@ -602,7 +614,7 @@ ${CLOUD_BADGE_CSS}
           </div>
 
           <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-            <!-- 统计条 + 聚合节点连通测试 -->
+            <!-- 统计条 + 插件源连通测试 -->
             <div class="px-3 sm:px-4 py-2.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
               <div class="text-[11px] text-slate-500">
                 已启用 <strong class="text-slate-700">{{ enabledPluginCount }}</strong> / {{ pluginSources.length }} 个插件源
@@ -610,11 +622,11 @@ ${CLOUD_BADGE_CSS}
               </div>
               <div class="flex items-center gap-2">
                 <button
-                  @click="testAggregator"
+                  @click="testPlugins"
                   :disabled="pluginTesting"
                   class="px-2.5 py-1.5 text-[11px] bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition flex items-center gap-1 disabled:opacity-60"
                 >
-                  <i class="fa-solid" :class="pluginTesting ? 'fa-circle-notch fa-spin' : 'fa-vial'"></i>测试聚合节点
+                  <i class="fa-solid" :class="pluginTesting ? 'fa-circle-notch fa-spin' : 'fa-vial'"></i>测试已启用源
                 </button>
                 <span v-if="pluginTestResult" class="text-[11px] px-2 py-1 rounded-lg" :class="pluginTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'">
                   {{ pluginTestResult.text }}
@@ -623,8 +635,9 @@ ${CLOUD_BADGE_CSS}
             </div>
 
             <p class="px-3 sm:px-4 py-2.5 text-[11px] text-slate-400 leading-relaxed border-b border-slate-100">
-              每个插件源独立一行，勾选即启用。已启用的源在搜索时会被<strong class="text-slate-500">合并成一次聚合节点请求</strong>，
-              所以勾得越多覆盖越广、单次响应也越慢；不确定的源建议关掉。备注只用于你自己辨认，不影响抓取。
+              每个插件源独立一行，勾选即启用。<strong class="text-slate-500">「原生」源由本站后端直接抓取</strong>，
+              不经过任何第三方站点，各自独立、互不影响；「第三方」源则是对外部聚合节点发起的一次 HTTP 请求。
+              不确定的源建议关掉——每多开一个都会增加单次搜索的耗时。备注只用于你自己辨认，不影响抓取。
             </p>
 
             <!-- 桌面端表格 -->
@@ -647,7 +660,13 @@ ${CLOUD_BADGE_CSS}
                     <td class="p-2.5 text-center">
                       <input type="checkbox" v-model="src.enabled" class="w-4 h-4 rounded text-indigo-600 align-middle">
                     </td>
-                    <td class="p-2.5 font-mono text-slate-700 truncate">{{ src.id }}</td>
+                    <td class="p-2.5">
+                      <div class="font-mono text-slate-700 truncate">{{ src.id }}</div>
+                      <div class="text-[10px] text-slate-400 truncate mt-1">
+                        <span class="px-1.5 py-0.5 rounded mr-1" :class="src.type === 'native' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'">{{ src.type === 'native' ? '原生' : '第三方' }}</span>
+                        {{ src.name }} · {{ src.desc }}
+                      </div>
+                    </td>
                     <td class="p-2.5">
                       <input v-model="src.label" maxlength="40" placeholder="如：磁力熊" class="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500">
                     </td>
@@ -666,7 +685,11 @@ ${CLOUD_BADGE_CSS}
               >
                 <input type="checkbox" v-model="src.enabled" class="mt-0.5 w-5 h-5 shrink-0 rounded text-indigo-600">
                 <div class="flex-1 min-w-0 space-y-1.5">
-                  <div class="font-mono text-xs text-slate-700 truncate">{{ src.id }}</div>
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="font-mono text-xs text-slate-700 truncate">{{ src.id }}</span>
+                    <span class="shrink-0 text-[10px] px-1.5 py-0.5 rounded" :class="src.type === 'native' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'">{{ src.type === 'native' ? '原生' : '第三方' }}</span>
+                  </div>
+                  <div class="text-[10px] text-slate-400 truncate">{{ src.name }} · {{ src.desc }}</div>
                   <input v-model="src.label" maxlength="40" placeholder="备注（可选）" class="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500">
                 </div>
               </div>
@@ -1003,9 +1026,6 @@ ${CLOUD_BADGE_CSS}
 
   const CLOUDS = ${CLOUDS_JSON};
 
-  /** V1.3：内置聚合节点背后的全部插件源 id（每个源在后台占一行） */
-  const PLUGIN_SOURCES = ${PLUGIN_SOURCES_JSON};
-
   /** 插件配置被清空时的兜底节点地址 */
   const FALLBACK_PLUGIN_ENDPOINT = ${JSON.stringify(FALLBACK_PLUGIN_ENDPOINT)};
 
@@ -1147,32 +1167,40 @@ ${CLOUD_BADGE_CSS}
        * 从「聚合节点配置 + 源备注」还原出后台要展示的插件源列表（V1.3）。
        * 节点地址本身不进界面，只在内存里带着走，保存时原样写回。
        */
+      /**
+       * 插件源列表（V1.4 重构）：**一行 = 一个插件条目**。
+       *
+       * 旧版把第三方聚合节点里的 89 个子源展开成 89 行——那种模型下所有源共用一次
+       * 节点请求、单独关掉一个源并不会减少请求数，开关其实是"假的"。
+       * 现在原生源（type='native'）各自是一次独立的抓取，逐个开关才有真实含义。
+       */
       const buildPluginSources = (plugins, labels) => {
-        const enabledIds = {};
-        let nodeEnabled = false;
+        const list = Array.isArray(plugins) ? plugins : [];
         let endpoint = '';
-
-        (plugins || []).forEach(p => {
-          if (p.type !== 'pansou') return;
-          if (p.enabled) nodeEnabled = true;
-          if (!endpoint && p.apiEndpoint) endpoint = p.apiEndpoint;
-          (p.pluginIds || []).forEach(id => { enabledIds[id] = 1; });
-        });
-
-        // 内置源清单 + KV 里出现过的自定义源（避免自定义源在界面上「消失」）
-        const catalog = PLUGIN_SOURCES.slice();
-        Object.keys(enabledIds).forEach(id => {
-          if (catalog.indexOf(id) < 0) catalog.push(id);
+        list.forEach(p => {
+          if (!endpoint && p && p.apiEndpoint) endpoint = p.apiEndpoint;
         });
 
         return {
           endpoint: endpoint || FALLBACK_PLUGIN_ENDPOINT,
-          sources: catalog.map(id => ({
-            id,
-            label: (labels && labels[id]) || '',
-            // 整个节点被停用时，所有源都显示为未启用
-            enabled: nodeEnabled && !!enabledIds[id]
-          }))
+          sources: list
+            .filter(p => p && p.id)
+            .map(p => ({
+              id: p.id,
+              label: (labels && labels[p.id]) || '',
+              enabled: p.enabled !== false,
+              type: p.type || 'pansou',
+              name: p.name || p.id,
+              desc:
+                p.desc ||
+                (p.type === 'native'
+                  ? 'Worker 内原生抓取'
+                  : p.pluginIds && p.pluginIds.length
+                    ? '第三方聚合节点（' + p.pluginIds.length + ' 个子源）'
+                    : '第三方聚合节点'),
+              // 记录原始配置，保存时原样回写（保住 endpoint / pluginIds）
+              base: p
+            }))
         };
       };
 
@@ -1239,26 +1267,27 @@ ${CLOUD_BADGE_CSS}
 
         saving.value = true;
         try {
-          // V1.3：插件源列表 → 合并回一条聚合节点配置
-          // （已启用的源在一次搜索里会被合并成一次节点请求，所以不产生额外请求数）
-          const enabledIds = pluginSources.value.filter(s => s.enabled).map(s => s.id);
+          // V1.4：插件源列表 → 还原成插件配置。
+          // 原生源各自独立；第三方聚合节点保留原有 endpoint / pluginIds，这里只更新开关。
           const labels = {};
           pluginSources.value.forEach(s => {
             if (s.label && s.label.trim()) labels[s.id] = s.label.trim();
           });
 
+          const plugins = pluginSources.value.map(s => {
+            const base = s.base || {
+              id: s.id,
+              name: s.name || s.id,
+              type: s.type === 'native' ? 'native' : 'pansou',
+              apiEndpoint: s.type === 'native' ? undefined : pluginEndpoint,
+              pluginIds: []
+            };
+            return { ...base, enabled: !!s.enabled };
+          });
+
           const payload = {
             channels: settings.value.channels,
-            plugins: [
-              {
-                id: 'pansou_aggregate',
-                name: 'PanSou 聚合节点',
-                enabled: enabledIds.length > 0,
-                type: 'pansou',
-                apiEndpoint: pluginEndpoint,
-                pluginIds: enabledIds
-              }
-            ],
+            plugins,
             pluginSourceLabels: labels,
             concurrency: Number(settings.value.concurrency) || 6,
             maxChannelsPerSearch: Number(settings.value.maxChannelsPerSearch) || 8,
@@ -1354,22 +1383,25 @@ ${CLOUD_BADGE_CSS}
         showToast('成功导入 ' + count + ' 个频道，记得保存');
       };
 
-      /* ---------------- 插件源（V1.3：每个源独立一行） ---------------- */
+      /* ---------------- 插件源（V1.4：一行 = 一个插件条目） ---------------- */
       const toggleAllPlugins = (on) => {
         pluginSources.value.forEach(s => { s.enabled = on; });
         dirty.value = true;
       };
 
       const resetPluginSources = () => {
-        // 「回到内置默认」= 内置清单全开并清空备注（自定义源保持原开关）
+        // 「回到内置默认」= 原生源全开、第三方聚合节点关闭、清空备注。
+        // 之所以顺手关掉聚合节点：V1.4 的目标就是搜索不再依赖第三方站点。
         pluginSources.value.forEach(s => {
-          if (PLUGIN_SOURCES.indexOf(s.id) >= 0) {
+          if (s.type === 'native') {
             s.enabled = true;
             s.label = '';
+          } else if (s.id === 'pansou_aggregate') {
+            s.enabled = false;
           }
         });
         dirty.value = true;
-        showToast('已恢复为内置全部启用，记得点保存');
+        showToast('已恢复为「原生源全开 / 聚合节点关闭」，记得点保存');
       };
 
       const addPluginSource = () => {
@@ -1378,12 +1410,26 @@ ${CLOUD_BADGE_CSS}
         const id = raw.trim().replace(/[^A-Za-z0-9_.-]/g, '');
         if (!id) { showToast('源 ID 格式不合法', 'error'); return; }
         if (pluginSources.value.some(s => s.id === id)) { showToast('该源已在列表中', 'error'); return; }
-        pluginSources.value.unshift({ id, label: '', enabled: true });
+        pluginSources.value.unshift({
+          id,
+          label: '',
+          enabled: true,
+          type: 'pansou',
+          name: id,
+          desc: '自定义聚合节点',
+          base: { id, name: id, type: 'pansou', apiEndpoint: pluginEndpoint, pluginIds: [id], enabled: true }
+        });
         dirty.value = true;
       };
 
-      /** 用当前已启用的源打一次聚合节点，验证节点是否可达 */
-      const testAggregator = async () => {
+      /**
+       * 逐个测试当前已启用的插件源。
+       *
+       * 原生源（type='native'）由 Worker 内引擎直接抓取，第三方节点走 HTTP，
+       * 后端统一返回逐源结果；这里把「通过几个 / 各源条数」摊平展示，
+       * 一眼就能看出是哪个源挂了（而不是只知道「整条插件链路失败」）。
+       */
+      const testPlugins = async () => {
         const ids = pluginSources.value.filter(s => s.enabled).map(s => s.id);
         if (ids.length === 0) {
           pluginTestResult.value = { ok: false, text: '没有启用任何插件源' };
@@ -1398,18 +1444,25 @@ ${CLOUD_BADGE_CSS}
             { headers: { Authorization: 'Bearer ' + currentToken() } }
           );
           const d = await r.json();
-          const a = (d.attempts || [])[0] || {};
-          if (a.ok) {
-            pluginTestResult.value = {
-              ok: true,
-              text: '通 ' + a.status + ' · ' + a.ms + 'ms · ' + (a.total != null ? a.total + ' 条' : '无计数')
-            };
-          } else {
-            pluginTestResult.value = {
-              ok: false,
-              text: a.error ? '失败：' + String(a.error).slice(0, 40) : 'HTTP ' + (a.status || '?')
-            };
+          const rows = Array.isArray(d.results) ? d.results : [];
+          if (rows.length === 0) {
+            pluginTestResult.value = { ok: false, text: '没有匹配的插件源' };
+            return;
           }
+          const okCount = rows.filter(x => x.ok).length;
+          const parts = rows.map(x => {
+            if (x.ok) {
+              return x.id + (x.total != null ? ' ' + x.total + ' 条' : ' 通') + '（' + x.ms + 'ms）';
+            }
+            return (
+              x.id + ' 失败' +
+              (x.error ? '：' + String(x.error).slice(0, 24) : x.status ? ' HTTP ' + x.status : '')
+            );
+          });
+          pluginTestResult.value = {
+            ok: okCount === rows.length,
+            text: '通过 ' + okCount + '/' + rows.length + ' · ' + parts.join(' · ')
+          };
         } catch (e) {
           pluginTestResult.value = { ok: false, text: '请求异常' };
         } finally {
@@ -1590,10 +1643,10 @@ ${CLOUD_BADGE_CSS}
         cacheModes: CACHE_MODES, cacheModeLabel,
         filteredChannels, enabledChannelsCount,
         toggleAllChannels, addChannel, removeChannel, doBatchImport,
-        // V1.3：插件源 / 安全状态 / API 文档
+        // V1.4：插件源 / 安全状态 / API 文档
         pluginFilter, pluginSources, pluginTesting, pluginTestResult,
         filteredPluginSources, enabledPluginCount,
-        toggleAllPlugins, resetPluginSources, addPluginSource, testAggregator,
+        toggleAllPlugins, resetPluginSources, addPluginSource, testPlugins,
         passwordHashed, frontendAuthOn, siteOrigin, copyText, apiGroups: API_GROUPS,
         toggleCloud, selectAllClouds, selectMainClouds, moveCloud,
         exportConfig, importConfig, resetToDefaults, save,

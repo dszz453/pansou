@@ -1,6 +1,6 @@
 {
   "name": "pansou-edge",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "高性能网盘搜索与聚合工具，支持部署在 Cloudflare Workers，支持后台管理 TG 频道与搜索插件，兼容 pansou-web API",
   "main": "src/index.ts",
   "scripts": {

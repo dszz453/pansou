@@ -9,8 +9,15 @@
  * ⚠️ 会真实登录一次后台（用当前密码），触发「旧明文密码自动升级为哈希」。
  *    这是 V1.3 设计的迁移路径，不会改变密码本身的值。
  */
+import { readFile } from 'node:fs/promises';
+
 const BASE = (process.argv[2] || 'https://pansou.dszz.us.ci').replace(/\/$/, '');
 const PWD = process.argv[3] || 'admin';
+
+/** 期望版本号读 package.json，发版时不用回来改断言（version.ts 是运行时唯一来源） */
+const PKG = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'));
+const EXPECT_VERSION = PKG.version;
+const EXPECT_LABEL = 'V' + EXPECT_VERSION.replace(/\.\d+$/, '');
 const H = { Authorization: 'Bearer ' + PWD, 'Content-Type': 'application/json' };
 
 let pass = 0, fail = 0;
@@ -33,7 +40,7 @@ console.log(`\n站点: ${BASE}\n`);
 console.log('──── 1 · 版本号与健康检查 ────');
 const health = await get('/api/health');
 ok('健康检查可用', health.status === 200 && health.json?.status === 'ok', `HTTP ${health.status}`);
-ok('版本号为 1.3.0', health.json?.version === '1.3.0', String(health.json?.version));
+ok('版本号与 package.json 一致', health.json?.version === EXPECT_VERSION, String(health.json?.version) + '（期望 ' + EXPECT_VERSION + '）');
 ok('健康检查暴露 credentials_hashed 字段', 'credentials_hashed' in (health.json || {}),
   'credentials_hashed=' + health.json?.credentials_hashed);
 ok('健康检查暴露 frontend_auth_enabled 字段', 'frontend_auth_enabled' in (health.json || {}),
@@ -45,7 +52,7 @@ console.log('\n──── 2 · 配置类接口必须禁止中间层缓存 ─�
 const uiCfg = await get('/api/ui-config');
 ok('/api/ui-config 带 cache-control: no-store',
   /no-store/.test(uiCfg.headers.get('cache-control') || ''), uiCfg.headers.get('cache-control'));
-ok('/api/ui-config 返回 1.3.0', uiCfg.json?.version === '1.3.0', String(uiCfg.json?.version));
+ok('/api/ui-config 版本一致', uiCfg.json?.version === EXPECT_VERSION, String(uiCfg.json?.version));
 ok('ui-config 下发网盘白名单',
   Array.isArray(uiCfg.json?.visible_cloud_types) && uiCfg.json.visible_cloud_types.length > 0,
   JSON.stringify(uiCfg.json?.visible_cloud_types));
@@ -124,13 +131,41 @@ ok('延时复读仍为新值（多 isolate 内存缓存已不干扰）',
   JSON.stringify(again.json?.visible_cloud_types) === JSON.stringify(TARGET),
   JSON.stringify(again.json?.visible_cloud_types));
 
-// 还原
+/*
+ * 还原 —— ⚠️ 这一段**真的在改线上配置**，还原不成功会把站点永久留在
+ * 「只展示夸克 + 阿里云盘」的状态（实测踩过：页面条数从 1386 掉到 603，
+ * 排查半天才发现是测试没还原干净，跟业务代码无关）。
+ *
+ * 所以不能只 POST 一次就断言：KV 写入在不同 colo/isolate 上是最终一致的，
+ * 紧接着的读很可能拿到旧值；而且断言只看 ui-config 会漏掉「KV 里到底存了啥」。
+ * 这里改成：POST → 轮询直到「直读 KV 的后台接口」也确认还原 → 才判通过。
+ */
+const sameSet = (a, b) =>
+  Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every(x => b.includes(x));
+
 await fetch(BASE + '/api/admin/settings', {
-  method: 'POST', headers: H, body: JSON.stringify({ visibleCloudTypes: orig })
+  method: 'POST',
+  headers: H,
+  body: JSON.stringify({ visibleCloudTypes: orig })
 });
-const restored = (await get('/api/ui-config')).json?.visible_cloud_types;
-ok('还原成功', JSON.stringify(restored) === JSON.stringify(orig),
-  `${restored?.length} 类 / 原始 ${orig?.length} 类`);
+
+let restoredKv = null;
+for (let i = 0; i < 8; i++) {
+  restoredKv = (await get('/api/admin/settings', { headers: H })).json?.visibleCloudTypes;
+  if (sameSet(restoredKv, orig)) break;
+  await new Promise(s => setTimeout(s, 1500));
+}
+ok('还原成功（直读 KV 已确认）', sameSet(restoredKv, orig),
+  `${restoredKv?.length} 类 / 原始 ${orig?.length} 类`);
+
+const restoredUi = (await get('/api/ui-config?fresh=' + Date.now())).json?.visible_cloud_types;
+ok('还原后前端配置同步', sameSet(restoredUi, orig), `${restoredUi?.length} 类`);
+
+if (!sameSet(restoredKv, orig)) {
+  console.log('\n⚠️⚠️ 还原失败！线上展示白名单已被本脚本改动，请在后台重新勾选全部网盘：');
+  console.log('   原始值 =', JSON.stringify(orig));
+  console.log('   当前值 =', JSON.stringify(restoredKv));
+}
 
 /* ---------- 7. 插件逐源开关 ---------- */
 console.log('\n──── 7 · 插件源逐行开关可写回 ────');

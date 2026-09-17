@@ -1,4 +1,5 @@
 import { PluginConfig, TgChannelConfig } from './types';
+import { NATIVE_SOURCES } from './plugins/native';
 
 /**
  * 单次调用默认处理的频道数上限（前端未指定时使用）。
@@ -89,11 +90,17 @@ export const DEFAULT_CHANNELS: TgChannelConfig[] = ALL_CHANNELS.map((name, index
 }));
 
 /**
- * 单次搜索默认并行调用的插件数上限。
- * 插件是完整的外部 HTTP 请求（聚合节点一次要跑 5~8 秒），比单个 TG 频道重得多，
- * 因此默认只开很小的并发，避免拖垮整体响应时间。
+ * 单次搜索默认调用的插件源数量上限。
+ *
+ * V1.4 起插件源以原生抓取为主：每个源打的是不同的站点、彼此独立，
+ * 并行跑（见 index.ts 的 PLUGIN_CONCURRENCY）的总耗时约等于「最慢的那个源」。
+ * 因此这里不再卡得很小 —— 但也不能无限大：源越多，单次请求的子请求数与被 WAF 拦的面越大。
+ * 当前内置 3 个原生源，给到 4 留一点余量。
+ *
+ * 注意：前端会显式按片指定 plugins，那条路径**不受这个上限约束**；
+ * 这里只影响「未指定 plugins」的调用方（如 `?plugins_only=true` 的开放 API）。
  */
-export const DEFAULT_MAX_PLUGINS = 2;
+export const DEFAULT_MAX_PLUGINS = 4;
 
 /**
  * 原始插件源清单（来自 fish2018/pansou 的 plugin/ 目录）。
@@ -116,19 +123,36 @@ lingjisp,quarktv,dyyjpro,gaoqing888,panlian,panzun,qiwei,melost,yunso`;
 export const ALL_PLUGIN_IDS: string[] = splitUnique(RAW_PLUGINS);
 
 /**
- * 默认插件配置：只放一个「聚合节点」。
+ * 默认插件配置（V1.4 重构）
  *
- * 之所以不逐个子插件配置，是因为这些插件本质上都是对海外/第三方站点的一次 HTTP 抓取，
- * 由 Cloudflare Worker 直连既慢又容易失败（且每个站点反爬策略不同）；
- * 交给一个已经跑通的 pansou 兼容节点聚合，一次请求就能拿到 89 个源的合并结果。
+ * 历史：早期版本只放一个「聚合节点」，把 89 个子源的抓取全部外包给第三方
+ * （`so.252035.xyz`）。实测该节点不稳定——同一关键词三次返回 428 / 307 / 133 条，
+ * 且去重后的**独有贡献只有 3.6%**，却是整条插件链路的单点故障。
  *
- * 想换成自建节点，只要把 apiEndpoint 改成你的 pansou 服务地址即可（后台可改）。
+ * 现在改为：
+ *  1. `type: 'native'` 的原生源**默认启用**，由 Worker 直接抓取，不依赖任何第三方；
+ *  2. 聚合节点保留但**默认停用**——它仍有少量独有结果，想要可以按需打开，
+ *     也可以在后台改成你自己的 pansou 服务地址。
+ *
+ * 落地新源前务必先用 `GET /api/debug/fetch?url=<接口>&full=1` 验证
+ * Worker 出口没被源站拉黑（国内不少站点直接封 Cloudflare IP 段）。
  */
 export const DEFAULT_PLUGINS: PluginConfig[] = [
+  ...NATIVE_SOURCES.map(
+    (s, index): PluginConfig => ({
+      id: s.id,
+      name: s.name,
+      desc: s.desc,
+      enabled: true,
+      type: 'native',
+      // 前几个作为首批并行调用，其余由前端分片补齐
+      priority: index
+    })
+  ),
   {
     id: 'pansou_aggregate',
-    name: `PanSou 聚合节点（${ALL_PLUGIN_IDS.length} 个插件源）`,
-    enabled: true,
+    name: `PanSou 聚合节点（${ALL_PLUGIN_IDS.length} 个插件源，默认停用）`,
+    enabled: false,
     type: 'pansou',
     apiEndpoint: 'https://so.252035.xyz/api/search',
     pluginIds: ALL_PLUGIN_IDS

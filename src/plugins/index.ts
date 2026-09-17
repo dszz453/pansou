@@ -1,13 +1,16 @@
 /**
  * 搜索插件引擎
  *
- * 支持两类插件：
- *  1. 'pansou'：调用任意「pansou 兼容」的 `/api/search` 聚合节点（如 so.252035.xyz），
- *     传入 `plugins=id1,id2` 启用远端子插件源（默认首个节点聚合了 89 个源）。
- *  2. 'custom'：调用任意标准 REST API，通过字段映射（responseMapping）把任意 JSON 映射成搜索结果。
+ * 支持三类插件：
+ *  1. 'native'（V1.4 起默认）：**在 Worker 内直接抓取资源站**，实现见 `./native.ts`。
+ *     不依赖任何第三方节点，是「不再依赖 so.252035.xyz」之后的主力路径。
+ *  2. 'pansou'：调用任意「pansou 兼容」的 `/api/search` 聚合节点，
+ *     传入 `plugins=id1,id2` 启用远端子插件源。默认配置里已停用。
+ *  3. 'custom'：调用任意标准 REST API，通过字段映射（responseMapping）把任意 JSON 映射成搜索结果。
  */
 
 import { PluginConfig, SearchResultItem, CloudType } from '../types';
+import { runNativeSource } from './native';
 import {
   extractTags,
   extractTitle,
@@ -380,6 +383,11 @@ export async function executePluginSearch(
   budgetMs: number = 15000
 ): Promise<SearchResultItem[]> {
   if (!plugin || !plugin.enabled) return [];
+
+  // 原生源：直接在 Worker 内抓取，不经过任何第三方节点
+  if (plugin.type === 'native') {
+    return runNativeSource(plugin.id, keyword, budgetMs);
+  }
 
   if (plugin.type === 'custom') {
     return executeCustomApiPlugin(plugin, keyword, budgetMs);

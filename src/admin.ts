@@ -1,4 +1,4 @@
-import { Env, SystemSettings, ResultCacheMode, FrontendPasswordMode } from './types';
+import { Env, SystemSettings, ResultCacheMode, FrontendPasswordMode, PluginConfig } from './types';
 import {
   DEFAULT_CHANNELS,
   DEFAULT_PLUGINS,
@@ -53,6 +53,17 @@ function normalizeLabels(input: unknown): Record<string, string> | undefined {
   return out;
 }
 
+/**
+ * 当前插件引擎版本；见 SystemSettings.pluginEngineVersion。
+ *
+ * ⚠️ 必须出现在**出厂默认值**里（下面的 buildDefaultSettings）。
+ * 出厂配置代表「已经是新模型」，如果它不带版本号，那么：
+ *   首次保存时 `saved.pluginEngineVersion` 是 undefined → 迁移被当成老配置再跑一遍，
+ *   把后台刚刚显式提交的插件列表覆盖掉（实测：后台关掉聚合节点、只留原生源，
+ *   保存后聚合节点又冒出来、原生源被塞回 3 个）。
+ */
+export const PLUGIN_ENGINE_VERSION = 2;
+
 /** 供后台重置为出厂配置时使用 */
 export function buildDefaultSettings(env: Env): SystemSettings {
   return {
@@ -63,6 +74,8 @@ export function buildDefaultSettings(env: Env): SystemSettings {
     maxChannelsPerSearch: DEFAULT_MAX_CHANNELS,
     channels: DEFAULT_CHANNELS,
     plugins: DEFAULT_PLUGINS,
+    /** 出厂配置即新模型，带上版本号可让迁移只在「真正读到老 KV」时触发一次 */
+    pluginEngineVersion: PLUGIN_ENGINE_VERSION,
     maxPluginsPerSearch: DEFAULT_MAX_PLUGINS,
     hotSearches: DEFAULT_HOT_SEARCHES,
     // V1.2：搜索结果默认完全不落 KV，避免把「写 1000 次/天」的免费额度打满
@@ -80,6 +93,36 @@ export function buildDefaultSettings(env: Env): SystemSettings {
  * 抽出来单独一层，是为了让「读」和「写」两条路径用同一套校验规则，
  * 避免后台存进一个非法值（比如 resultCacheMode = 'xxx'）后线上行为不可预期。
  */
+/**
+ * 插件配置一次性迁移（老配置 → V1.4 原生源模型）
+ *
+ * 背景：老配置里只有一个 `pansou_aggregate`，把 89 个子源的抓取全部外包给
+ * 第三方节点 `so.252035.xyz`。V1.4 起改为 Worker 内原生抓取，因此：
+ *   1. 把默认的原生源补进配置（老 KV 里根本没有这些条目）；
+ *   2. 把聚合节点**停用**——目标是搜索不再依赖它（后台随时可以开回来）。
+ *
+ * ⚠️ 必须用版本号做一次性判断，不能每次读取都强制停用：
+ * 否则用户在后台把它打开、保存后，下一次读取又会被关掉，变成「设置了不生效」。
+ */
+function migratePlugins(saved: PluginConfig[] | undefined, version: unknown): PluginConfig[] {
+  const list = Array.isArray(saved) ? saved : [];
+  const v = typeof version === 'number' ? version : 0;
+  if (v >= PLUGIN_ENGINE_VERSION) return list;
+
+  // 尊重「显式清空插件」的选择：plugins 为空数组 = 用户主动关掉了全部插件，
+  // 此时不能把原生源塞回去（否则后台会一直显示着刚删掉的源）。
+  if (list.length === 0) return list;
+
+  const ids = new Set(list.map(p => p && p.id));
+  const additions = DEFAULT_PLUGINS.filter(p => !ids.has(p.id) && p.type === 'native');
+
+  const patched = list.map(p =>
+    p && p.id === 'pansou_aggregate' ? { ...p, enabled: false } : p
+  );
+
+  return [...additions, ...patched];
+}
+
 function mergeWithDefaults(defaults: SystemSettings, saved: any): SystemSettings {
   if (!saved || typeof saved !== 'object') return defaults;
 
@@ -94,6 +137,8 @@ function mergeWithDefaults(defaults: SystemSettings, saved: any): SystemSettings
     // 插件允许被清空（后端可能故意只用 TG 频道），因此只在“字段缺失”时回退默认，
     // 显式存成 [] 表示用户主动关掉了全部插件，要尊重这个选择。
     plugins: Array.isArray(saved.plugins) ? saved.plugins : defaults.plugins,
+    /** 一次性迁移标记，见 migratePlugins */
+    pluginEngineVersion: PLUGIN_ENGINE_VERSION,
     maxChannelsPerSearch: saved.maxChannelsPerSearch || defaults.maxChannelsPerSearch,
     maxPluginsPerSearch:
       typeof saved.maxPluginsPerSearch === 'number'
@@ -122,6 +167,10 @@ function mergeWithDefaults(defaults: SystemSettings, saved: any): SystemSettings
         ? saved.frontendPasswordHash
         : undefined
   };
+
+  // 插件配置一次性迁移：老 KV 里只有第三方聚合节点，不补就永远拿不到原生源。
+  // 必须在凭据处理之前完成（下面几行直接操作 merged 的字段）。
+  merged.plugins = migratePlugins(merged.plugins, saved.pluginEngineVersion);
 
   // 凭据字段：只接受字符串，不做「空值回退默认」（否则旧明文永远清不掉）
   merged.adminPasswordHash =
