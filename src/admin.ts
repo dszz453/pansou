@@ -1,4 +1,4 @@
-import { Env, SystemSettings, ResultCacheMode } from './types';
+import { Env, SystemSettings, ResultCacheMode, FrontendPasswordMode } from './types';
 import {
   DEFAULT_CHANNELS,
   DEFAULT_PLUGINS,
@@ -7,11 +7,27 @@ import {
 } from './defaults';
 import { DEFAULT_VISIBLE_CLOUDS, normalizeVisibleClouds } from './cloud';
 import { settingsCache } from './cache';
+import {
+  hashPassword,
+  verifyPassword,
+  isPasswordHash,
+  deriveAccessToken,
+  constantTimeEqualString
+} from './auth';
 
 const SETTINGS_KEY = 'pansou_system_settings';
 
-/** 系统配置在 isolate 内的缓存时长：一次搜索会产生 ~19 个请求，全走 KV 读太浪费 */
-const SETTINGS_MEMORY_TTL = 60_000;
+/**
+ * 系统配置在 isolate 内的缓存时长。
+ *
+ * 一次搜索会产生 ~19 个请求，每个都读一次 KV 太浪费，所以必须缓存。
+ *
+ * 但缓存时长**不能太长**：Cloudflare 会同时跑多个 isolate，每个都有自己的缓存，
+ * 后台保存后 KV 立刻变了，别的 isolate 却还抱着旧配置。60 秒（旧值）会让
+ * 「后台改完配置、前台看起来没生效」持续将近一分钟，被当成功能坏了。
+ * 15 秒既能合并掉同一次搜索里的十几个请求，又能让改动很快全网可见。
+ */
+const SETTINGS_MEMORY_TTL = 15_000;
 
 export const DEFAULT_HOT_SEARCHES = [
   '热辣滚烫', '周处除三害', '沙丘2', '繁花', '三体', '庆余年', '黑神话悟空', '流浪地球2'
@@ -23,10 +39,24 @@ function normalizeCacheMode(v: unknown): ResultCacheMode | null {
   return VALID_CACHE_MODES.includes(v as ResultCacheMode) ? (v as ResultCacheMode) : null;
 }
 
+function normalizeFrontendPasswordMode(v: unknown): FrontendPasswordMode {
+  return v === 'custom' ? 'custom' : 'reuse';
+}
+
+/** 只保留「键值都是字符串」的备注项，防脏数据 */
+function normalizeLabels(input: unknown): Record<string, string> | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, 40);
+  }
+  return out;
+}
+
 /** 供后台重置为出厂配置时使用 */
 export function buildDefaultSettings(env: Env): SystemSettings {
   return {
-    adminPassword: env.ADMIN_PASSWORD || 'admin',
+    // V1.3：不再预置明文密码。没有设置过哈希时，校验回落到环境变量 ADMIN_PASSWORD 或内置 'admin'
     concurrency: parseInt(env.DEFAULT_CONCURRENCY || '6', 10),
     cacheTtl: parseInt(env.CACHE_TTL || '300', 10),
     tgProxyUrl: env.TG_PROXY_URL || '',
@@ -38,7 +68,10 @@ export function buildDefaultSettings(env: Env): SystemSettings {
     // V1.2：搜索结果默认完全不落 KV，避免把「写 1000 次/天」的免费额度打满
     resultCacheMode: 'memory',
     visibleCloudTypes: DEFAULT_VISIBLE_CLOUDS,
-    showAutoCheck: true
+    showAutoCheck: true,
+    // V1.3：前台默认不需要密码，开关打开后才要求登录
+    frontendAuthEnabled: false,
+    frontendPasswordMode: 'reuse'
   };
 }
 
@@ -50,7 +83,7 @@ export function buildDefaultSettings(env: Env): SystemSettings {
 function mergeWithDefaults(defaults: SystemSettings, saved: any): SystemSettings {
   if (!saved || typeof saved !== 'object') return defaults;
 
-  return {
+  const merged: SystemSettings = {
     ...defaults,
     ...saved,
     // 数组类型若被存成空数组则回退默认，避免「保存后什么都没了」
@@ -66,15 +99,51 @@ function mergeWithDefaults(defaults: SystemSettings, saved: any): SystemSettings
       typeof saved.maxPluginsPerSearch === 'number'
         ? saved.maxPluginsPerSearch
         : defaults.maxPluginsPerSearch,
-    adminPassword: saved.adminPassword || defaults.adminPassword,
     // 缓存模式：非法值一律回退默认（memory），绝不让脏数据把 KV 写爆
     resultCacheMode: normalizeCacheMode(saved.resultCacheMode) || defaults.resultCacheMode,
     // 网盘可见列表：显式传 [] 表示「一个都不展示」，要尊重；字段缺失才回退默认
     visibleCloudTypes:
       normalizeVisibleClouds(saved.visibleCloudTypes) ?? defaults.visibleCloudTypes,
     showAutoCheck:
-      typeof saved.showAutoCheck === 'boolean' ? saved.showAutoCheck : defaults.showAutoCheck
+      typeof saved.showAutoCheck === 'boolean' ? saved.showAutoCheck : defaults.showAutoCheck,
+    // 插件源备注：允许为空对象（= 全部清空）
+    pluginSourceLabels: normalizeLabels(saved.pluginSourceLabels),
+    // 前台访问密码
+    frontendAuthEnabled:
+      typeof saved.frontendAuthEnabled === 'boolean'
+        ? saved.frontendAuthEnabled
+        : !!defaults.frontendAuthEnabled,
+    frontendPasswordMode: normalizeFrontendPasswordMode(
+      saved.frontendPasswordMode ?? defaults.frontendPasswordMode
+    ),
+    // 空串等同「未设置」，否则会残留一个假的「已设置密码」状态
+    frontendPasswordHash:
+      typeof saved.frontendPasswordHash === 'string' && saved.frontendPasswordHash
+        ? saved.frontendPasswordHash
+        : undefined
   };
+
+  // 凭据字段：只接受字符串，不做「空值回退默认」（否则旧明文永远清不掉）
+  merged.adminPasswordHash =
+    typeof saved.adminPasswordHash === 'string' && saved.adminPasswordHash
+      ? saved.adminPasswordHash
+      : undefined;
+  // 旧明文：一旦已经存了哈希，就顺手把明文擦掉
+  if (merged.adminPasswordHash) {
+    merged.adminPassword = undefined;
+  } else {
+    merged.adminPassword =
+      typeof saved.adminPassword === 'string' && saved.adminPassword
+        ? saved.adminPassword
+        : undefined;
+  }
+
+  // 独立前台密码一旦被清空，模式要退回「复用后台密码」，否则会出现无密码可验的空档
+  if (merged.frontendPasswordMode === 'custom' && !merged.frontendPasswordHash) {
+    merged.frontendPasswordMode = 'reuse';
+  }
+
+  return merged;
 }
 
 /**
@@ -141,18 +210,121 @@ export async function saveSystemSettings(
   }
 }
 
+/* ============================================================
+ * 凭据校验（V1.3）
+ * ============================================================ */
+
 /**
- * 校验管理后台请求凭据
+ * 后台当前生效的「凭据源」，按优先级：
+ *   KV 里的哈希 → KV 里遗留的旧明文 → 环境变量 → 内置默认 'admin'
+ */
+function adminCredential(settings: SystemSettings, env: Env): string {
+  return (
+    settings.adminPasswordHash ||
+    settings.adminPassword ||
+    env.ADMIN_PASSWORD ||
+    'admin'
+  );
+}
+
+/**
+ * 校验管理后台请求凭据。
+ *
+ * 附带一个「历史配置自愈」：如果匹配到的是 KV 里遗留的**明文**密码，
+ * 登录成功后就地改写为 PBKDF2 哈希并清掉明文字段 —— 用户不需要做任何事，
+ * 用旧密码登录一次即完成升级。
  */
 export async function verifyAdminAuth(req: Request, env: Env): Promise<boolean> {
   const authHeader = req.headers.get('Authorization') || '';
   const token = authHeader.replace(/^Bearer\s+/i, '').trim();
   if (!token) return false;
 
-  // 环境变量里的密码优先级最低，但只需比对字符串，先比它可以省一次 KV 读
-  if (env.ADMIN_PASSWORD && token === env.ADMIN_PASSWORD) return true;
-
   const settings = await getSystemSettings(env);
-  const targetPassword = settings.adminPassword || env.ADMIN_PASSWORD || 'admin';
-  return token === targetPassword;
+  const stored = settings.adminPasswordHash || settings.adminPassword;
+
+  // KV 里配置过密码 → **以它为准**，环境变量不再作为可用的后门。
+  // 否则会出现「在后台改了密码，但环境变量里那个默认 admin 依旧能登进来」，
+  // 改密码就完全失去意义了。
+  if (stored) {
+    if (!(await verifyPassword(token, stored))) return false;
+  } else {
+    // KV 里没配置过 → 回落到环境变量，最后是内置默认 'admin'
+    if (env.ADMIN_PASSWORD && (await verifyPassword(token, env.ADMIN_PASSWORD))) return true;
+    if (!(await verifyPassword(token, 'admin'))) return false;
+  }
+
+  // 命中「KV 里遗留的明文」→ 静默升级为哈希。
+  // 注意这里刻意只认 settings.adminPassword（真正存在 KV 里的那份明文）：
+  // 如果只是回落到内置默认 'admin'，就不要往 KV 写哈希 ——
+  // 否则后台会显示「已哈希存储」，掩盖住「密码还是 admin」这个更该提醒的事。
+  const legacyPlain = settings.adminPassword;
+  if (legacyPlain && !settings.adminPasswordHash && !isPasswordHash(legacyPlain)) {
+    try {
+      await saveSystemSettings(env, {
+        adminPasswordHash: await hashPassword(token),
+        adminPassword: ''
+      });
+    } catch (e) {
+      /* 升级失败不影响本次登录，下次登录再试 */
+    }
+  }
+
+  return true;
+}
+
+/** 后台密码是否仍是内置默认的 'admin'（用于后台页面给出醒目提醒） */
+export async function isUsingDefaultPassword(
+  settings: SystemSettings,
+  env: Env
+): Promise<boolean> {
+  const stored = settings.adminPasswordHash || settings.adminPassword;
+  if (stored) return verifyPassword('admin', stored);
+  // KV 没配置过 → 真正生效的是环境变量（没设则等于内置默认 'admin'）
+  if (env.ADMIN_PASSWORD) return verifyPassword('admin', env.ADMIN_PASSWORD);
+  return true;
+}
+
+/**
+ * 前台访问开关打开时，当前生效的前台凭据源。
+ *
+ * - `custom` 模式 → 独立的前台密码哈希
+ * - `reuse` 模式  → 后台密码（哈希 / 旧明文 / 环境变量 / 内置默认）
+ */
+export function frontendCredential(settings: SystemSettings, env: Env): string {
+  if (settings.frontendPasswordMode === 'custom' && settings.frontendPasswordHash) {
+    return settings.frontendPasswordHash;
+  }
+  return adminCredential(settings, env);
+}
+
+/** 前台是否开启了访问密码 */
+export function isFrontendAuthEnabled(settings: SystemSettings): boolean {
+  return settings.frontendAuthEnabled === true;
+}
+
+/** 校验访客提交的前台密码 */
+export async function verifyFrontendPassword(
+  password: string,
+  settings: SystemSettings,
+  env: Env
+): Promise<boolean> {
+  if (!isFrontendAuthEnabled(settings)) return false;
+  return verifyPassword(password, frontendCredential(settings, env));
+}
+
+/**
+ * 当前生效的前台访问令牌。
+ * 未开启前台密码时返回 null（此时所有数据接口都是公开的）。
+ */
+export async function frontendAccessToken(
+  settings: SystemSettings,
+  env: Env
+): Promise<string | null> {
+  if (!isFrontendAuthEnabled(settings)) return null;
+  return deriveAccessToken(frontendCredential(settings, env));
+}
+
+/** 恒时比对前台令牌 */
+export function tokenMatches(input: string, expected: string): boolean {
+  return constantTimeEqualString(input.trim(), expected);
 }

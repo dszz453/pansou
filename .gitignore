@@ -79,9 +79,27 @@ q_search.json
 livechk.html
 live_p.html
 
-# UI 截图产物（ui_shot.mjs 生成，只用于本地几何断言，不入库）
-*-desktop.png
-*-mobile.png
-admin-*.png
-*-1440.png
-*-390.png
+# 一次性探针脚本（临时创建、用完即删；含 API 令牌的脚本一律不进库）
+_*.mjs
+cf_*.mjs
+cf_*.json
+deploy_preflight.json
+deploy_edge_result.json
+admin_save_live.json
+
+# 上一轮数据整理的临时产物（PG 源 / 接口提取 / 视频端实验）
+analyze_pg.py
+extract_all.py
+inspect_*.py
+print_interfaces.py
+parse_test.mjs
+extracted_interfaces.json
+pg_extracted/
+test_tmdb.mjs
+run_tmdb_test.mjs
+test_tvbox_local.mjs
+verify_tvbox_live.mjs
+src/tvbox/
+
+# UI 截图产物（ui_shot.mjs / shot_admin_v13.mjs 生成，只用于本地几何断言与人工核对，不入库）
+*.png

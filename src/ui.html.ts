@@ -81,6 +81,53 @@ ${CLOUD_BADGE_CSS}
 </head>
 <body class="bg-gradient-to-b from-slate-50 via-slate-50 to-slate-100/60 text-slate-800 min-h-screen flex flex-col font-sans antialiased">
   <div id="app" v-cloak class="flex flex-col min-h-screen">
+
+    <!-- ============ 前台访问密码（V1.3） ============
+         后台开启「前台访问密码」后，访客必须先解锁才能搜索。
+         首页 HTML 与 /api/ui-config 保持公开，所以这一层是前端渲染的登录门，
+         真正的拦截发生在数据接口（无令牌一律 401）。 -->
+    <div v-if="locked" class="fixed inset-0 z-[60] flex items-center justify-center px-4 bg-slate-50">
+      <div class="w-full max-w-sm">
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-xl shadow-slate-200/60 p-6 sm:p-7">
+          <div class="text-center mb-6">
+            <div class="w-14 h-14 mx-auto rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center text-white text-xl shadow-lg shadow-indigo-500/25 mb-3">
+              <i class="fa-solid fa-lock"></i>
+            </div>
+            <h2 class="font-bold text-lg text-slate-800">需要访问密码</h2>
+            <p class="text-xs text-slate-400 mt-1">本站已开启访问保护，请输入密码后继续</p>
+          </div>
+
+          <form @submit.prevent="unlock" class="space-y-3">
+            <div class="relative">
+              <input
+                :type="showUnlockPwd ? 'text' : 'password'"
+                v-model="unlockInput"
+                autocomplete="current-password"
+                placeholder="访问密码"
+                class="w-full pl-10 pr-10 py-3 text-base border-2 border-slate-200 rounded-xl outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+              />
+              <i class="fa-solid fa-key absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-sm"></i>
+              <button type="button" @click="showUnlockPwd = !showUnlockPwd" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+                <i class="fa-solid text-sm" :class="showUnlockPwd ? 'fa-eye-slash' : 'fa-eye'"></i>
+              </button>
+            </div>
+            <button
+              type="submit"
+              :disabled="unlocking || !unlockInput"
+              class="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-semibold text-sm rounded-xl transition shadow-md shadow-blue-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <i class="fa-solid" :class="unlocking ? 'fa-circle-notch fa-spin' : 'fa-unlock'"></i>
+              <span>{{ unlocking ? '验证中…' : '解锁' }}</span>
+            </button>
+          </form>
+
+          <p v-if="unlockError" class="mt-3 text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 flex items-start gap-1.5">
+            <i class="fa-solid fa-circle-exclamation mt-0.5"></i><span>{{ unlockError }}</span>
+          </p>
+        </div>
+      </div>
+    </div>
+
     <!-- 顶栏导航 -->
     <header class="border-b border-slate-200/80 glass sticky top-0 z-40">
       <div class="safe-top"></div>
@@ -109,15 +156,8 @@ ${CLOUD_BADGE_CSS}
             <i class="fa-solid fa-mobile-screen-button"></i>
             <span class="hidden sm:inline">安装到桌面</span>
           </button>
-          <button @click="showApiModal = true" class="px-2.5 sm:px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-blue-600 hover:bg-slate-100/80 rounded-lg transition flex items-center gap-1">
-            <i class="fa-solid fa-code"></i>
-            <span class="hidden sm:inline">API 接口</span>
-          </button>
-          <!-- 后台改为独立页面（/admin），首页不再承载管理功能 -->
-          <a href="/admin" class="px-2.5 sm:px-3 py-1.5 text-xs font-medium text-slate-600 hover:text-blue-600 hover:bg-slate-100/80 rounded-lg transition flex items-center gap-1">
-            <i class="fa-solid fa-sliders"></i>
-            <span class="hidden sm:inline">管理后台</span>
-          </a>
+          <!-- V1.3：首页不再放任何管理入口 —— 配置与 API 文档统一在 /admin，
+               首页只做搜索这一件事。（从站外地址栏直接访问 /admin 即可） -->
         </div>
       </div>
     </header>
@@ -413,7 +453,7 @@ ${CLOUD_BADGE_CSS}
             <i class="fa-regular fa-folder-open"></i>
           </div>
           <h3 class="text-slate-700 font-semibold mb-1">未找到相关资源</h3>
-          <p class="text-slate-400 text-xs">请尝试更换更简短的关键词，或在管理后台开启更多搜索源</p>
+          <p class="text-slate-400 text-xs">请尝试更换更简短的关键词，或稍后重试（上游频道偶发限流）</p>
         </div>
       </div>
     </main>
@@ -431,42 +471,6 @@ ${CLOUD_BADGE_CSS}
       </div>
     </footer>
 
-    <!-- API 接入说明弹窗 (Modal) -->
-    <div v-if="showApiModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-      <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
-        <div class="flex items-center justify-between pb-3 border-b border-slate-100">
-          <h3 class="font-bold text-lg text-slate-800">
-            <i class="fa-solid fa-code text-blue-600 mr-2"></i>开放 API 接口文档
-          </h3>
-          <button @click="showApiModal = false" class="text-slate-400 hover:text-slate-600">
-            <i class="fa-solid fa-xmark text-lg"></i>
-          </button>
-        </div>
-        <div class="mt-4 space-y-4 text-xs">
-          <div>
-            <h4 class="font-bold text-slate-700 text-sm mb-1">1. 核心聚合搜索</h4>
-            <div class="bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-xs overflow-x-auto">
-              POST /api/search<br>
-              Body: {"kw":"三体", "res":"merge"}<br>
-              返回: {"code":0, "message":"success", "data":{ "total":..., "merged_by_type":{...} }}
-            </div>
-          </div>
-          <div>
-            <h4 class="font-bold text-slate-700 text-sm mb-1">2. 网盘链接有效性检测</h4>
-            <div class="bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-xs overflow-x-auto">
-              GET /api/check?url=https://pan.quark.cn/s/xxx<br>
-              返回: {"code":0, "valid":true, "status":"valid", "label":"有效"}
-            </div>
-          </div>
-          <div>
-            <h4 class="font-bold text-slate-700 text-sm mb-1">3. 频道与插件列表</h4>
-            <div class="bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-xs">
-              GET /api/channels · GET /api/plugins
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
 
   </div>
 
@@ -479,7 +483,20 @@ ${CLOUD_BADGE_CSS}
         const searched = ref(false);
         const loading = ref(false);
         const activeTab = ref('all');
-        const showApiModal = ref(false);
+
+        /* ---------------- 前台访问密码（V1.3） ----------------
+           令牌由服务端下发、存在本地，之后所有数据接口都带 X-Frontend-Token。
+           它由密码哈希派生，所以后台一改密码，这边的旧令牌就会自动 401 并被清掉。 */
+        const FE_TOKEN_KEY = 'pansou_fe_token';
+        const locked = ref(false);
+        const unlockInput = ref('');
+        const unlockError = ref('');
+        const unlocking = ref(false);
+        const showUnlockPwd = ref(false);
+        // 隐私模式 / 禁用存储时 localStorage 会直接抛错，这里必须兜住
+        let savedFeToken = '';
+        try { savedFeToken = localStorage.getItem(FE_TOKEN_KEY) || ''; } catch (e) {}
+        const feToken = ref(savedFeToken);
 
         const hotSearches = ref(['热辣滚烫', '周处除三害', '沙丘2', '繁花', '三体', '庆余年', '黑神话悟空', '流浪地球2']);
         const mergedResults = ref({});
@@ -511,6 +528,53 @@ ${CLOUD_BADGE_CSS}
         let deferredPrompt = null;
 
         const getCloudLabel = (type) => cloudLabels.value[type] || type || '其他网盘';
+
+        /* ---------------- 带访问令牌的数据请求 ----------------
+           后台开启前台密码后，搜索/测活/频道/插件接口都要求令牌；
+           这里统一注入请求头，并在收到 401 时立即退回登录门。 */
+        const apiFetch = async (url, init) => {
+          const opts = Object.assign({}, init || {});
+          const headers = Object.assign({}, opts.headers || {});
+          if (feToken.value) headers['X-Frontend-Token'] = feToken.value;
+          opts.headers = headers;
+
+          const res = await fetch(url, opts);
+          if (res.status === 401) {
+            feToken.value = '';
+            try { localStorage.removeItem(FE_TOKEN_KEY); } catch (e) {}
+            locked.value = true;
+          }
+          return res;
+        };
+
+        const unlock = async () => {
+          const pwd = unlockInput.value.trim();
+          if (!pwd) return;
+          unlocking.value = true;
+          unlockError.value = '';
+          try {
+            const res = await fetch('/api/frontend/auth', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ password: pwd })
+            });
+            const d = await res.json().catch(() => ({}));
+            if (res.ok && d.code === 0 && (d.token || d.enabled === false)) {
+              if (d.token) {
+                feToken.value = d.token;
+                try { localStorage.setItem(FE_TOKEN_KEY, d.token); } catch (e) {}
+              }
+              unlockInput.value = '';
+              locked.value = false;
+            } else {
+              unlockError.value = d.message || '密码错误，请重新输入';
+            }
+          } catch (e) {
+            unlockError.value = '无法连接服务，请检查网络';
+          } finally {
+            unlocking.value = false;
+          }
+        };
 
         // 扁平化全部结果列表
         const allList = computed(() => {
@@ -606,7 +670,7 @@ ${CLOUD_BADGE_CSS}
           if (!item || !item.url) return;
           itemStatusMap.value[item.url] = { status: 'checking', label: '检测中...' };
           try {
-            const r = await fetch('/api/check', {
+            const r = await apiFetch('/api/check', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -725,12 +789,12 @@ ${CLOUD_BADGE_CSS}
 
           try {
             if (!cachedChannelsInfo) {
-              const chRes = await fetch('/api/channels');
+              const chRes = await apiFetch('/api/channels');
               cachedChannelsInfo = await chRes.json();
             }
             if (!cachedPluginsInfo) {
               try {
-                const plRes = await fetch('/api/plugins');
+                const plRes = await apiFetch('/api/plugins');
                 cachedPluginsInfo = await plRes.json();
               } catch (e) {
                 cachedPluginsInfo = { plugins: [] };
@@ -754,7 +818,7 @@ ${CLOUD_BADGE_CSS}
                   const idx = cursor++;
                   if (idx >= shards.length) return;
                   try {
-                    const r = await fetch('/api/search', {
+                    const r = await apiFetch('/api/search', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ kw, channels: shards[idx], res: 'merge' })
@@ -777,7 +841,7 @@ ${CLOUD_BADGE_CSS}
             const pluginTask = async () => {
               if (pluginCount === 0) return;
               try {
-                const r = await fetch('/api/search', {
+                const r = await apiFetch('/api/search', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ kw, plugins_only: true, res: 'merge' })
@@ -831,6 +895,13 @@ ${CLOUD_BADGE_CSS}
               }
               showAutoCheck.value = cfg.show_auto_check !== false;
               autoCheck.value = showAutoCheck.value;
+              // V1.3：后台开了前台访问密码 → 没有本地令牌就先弹登录门
+              // （本地令牌若已失效，第一次数据请求会 401，再由 apiFetch 退回登录门）
+              if (cfg.frontend_auth_enabled) {
+                locked.value = !feToken.value;
+              } else {
+                locked.value = false;
+              }
             }
           } catch (e) {}
 
@@ -866,7 +937,6 @@ ${CLOUD_BADGE_CSS}
           searched,
           loading,
           activeTab,
-          showApiModal,
           hotSearches,
           mergedResults,
           tabTypes,
@@ -897,7 +967,14 @@ ${CLOUD_BADGE_CSS}
           installPwa,
           doSearch,
           quickSearch,
-          resetToHome
+          resetToHome,
+          // V1.3：前台访问密码
+          locked,
+          unlockInput,
+          unlockError,
+          unlocking,
+          showUnlockPwd,
+          unlock
         };
       }
     });

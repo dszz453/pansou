@@ -24,6 +24,21 @@
 
 ---
 
+## 🆕 V1.3 更新要点
+
+| # | 优化项 | 做法 |
+| :-: | :--- | :--- |
+| 1 | **密码全部加密存储** | 后台密码不再明文存 KV，改为 **PBKDF2-SHA256 + 随机盐**（10000 轮，`pbkdf2$sha256$<iter>$<salt>$<dk>` 自描述格式），比对用恒时函数防时序攻击。旧版遗留的明文密码**用旧密码登录一次即自动升级为哈希**，无需手工迁移。 |
+| 2 | **首页去掉「管理后台」按钮** | 后台入口不再暴露在首页，只保留 `/admin` 直连（`noindex` 不参与收录）。 |
+| 3 | **「API 接口」挪进后台** | 首页的接口文档弹窗整体移除，改为后台侧边导航里的独立「API 接口」页。 |
+| 4 | **删掉插件「接口地址」字段** | 该字段在聚合节点模式下无实际作用，连同卡片折叠一起删除，插件区只留有效项。 |
+| 5 | **插件按源逐行开关** | 内置聚合节点里的 **89 个子插件源拆成独立行**，每行可单独启用/禁用 + 写备注，支持关键词筛选、全启用/全禁用；保存时自动合并回一条聚合节点配置（不增加请求数）。 |
+| 6 | **前台访问密码** | 后台可开启「前台登录密码」，支持 **复用后台密码** 或 **独立设置**（同样只存哈希）。开启后数据接口全部加门禁，访客先用密码换一个**无状态令牌**（由密码哈希派生，改密码即全量失效）。 |
+| 7 | **修掉「后台结果展示选网盘不起作用」** | `/api/ui-config` 原先带 `max-age=120, stale-while-revalidate=600`，被浏览器/CDN 缓存后改动最长 12 分钟不生效。改为 `no-store`，并把 `/api/channels`、`/api/plugins` 一并改掉；配置读路径强制直读 KV、isolate 内存缓存 TTL 从 60s 收到 15s。 |
+| 8 | **版本号 V1.3** | 仍集中在 `src/version.ts`，一处改动全站同步。 |
+
+---
+
 ## 🆕 V1.2 更新要点
 
 | # | 优化项 | 做法 |
@@ -70,6 +85,7 @@
 │   ├── types.ts        # 全局 TypeScript 类型定义与网盘分类
 │   ├── parser.ts       # 智能网盘 URL / 提取码 / 标题标签解析器
 │   ├── tg.ts           # Telegram 公开频道内容抓取与 HTML 解析
+│   ├── auth.ts         # 口令哈希与令牌派生（PBKDF2-SHA256 + 盐 + 恒时比对）
 │   ├── admin.ts        # 系统配置读写与 KV 存储管理
 │   ├── admin.ui.ts     # 独立后台页面（/admin）Vue 单页
 │   ├── cache.ts        # isolate 级内存缓存（LRU + TTL），替代搜索结果落 KV
@@ -89,6 +105,8 @@
 ├── deploy.mjs          # 一键部署脚本（跨平台）
 ├── deploy.bat          # 一键部署脚本（Windows）
 ├── reset_settings.mjs  # 重置 KV 系统设置（全量启用 143 频道 + 恢复默认插件）
+├── verify_v13.mjs           # V1.3 特性回归（密码哈希 / 插件逐源 / 前台门禁 / 旧配置兼容 / 多 isolate 可见性，91 项，离线）
+├── verify_display_e2e.mjs   # 「结果展示选网盘」端到端回归（真服务 + 真浏览器 + 后台勾选交互，23 项）
 ├── verify_v12.mjs           # V1.2 特性回归（PWA / 后台分页 / 网盘白名单 / KV 模式 / 版本，40 项）
 ├── verify_full.mjs          # 143 频道端到端分片搜索验证（BASE=域名 可指定站点）
 ├── verify_plugin_stale.mjs  # 插件过期缓存兜底验证（连续强制刷新看是否会出现空结果）
@@ -129,7 +147,7 @@
 
 ---
 
-## ⚠️ 两个必须知道的坑
+## ⚠️ 三个必须知道的坑
 
 ### 1️⃣ `src/ui.html.ts` 里写内联 JS，反斜杠必须双写
 
@@ -153,6 +171,17 @@
 
 `*.workers.dev` 在中国大陆解析被污染，直连一定失败。
 **必须在 Cloudflare 为该 Worker 绑定自有域名**（Workers → Settings → Domains & Routes → Add Custom Domain）。
+
+### 3️⃣ 「后台改了配置，前台半天不生效」有两层缓存要一起拆
+
+这是 V1.3 修掉的真实线上问题（现象：后台「结果展示」里取消勾选某个网盘，前台照样出现）。两层缓存叠在一起，只拆一层是不够的：
+
+| 层级 | 症状 | 修法 |
+| :--- | :--- | :--- |
+| **HTTP 缓存**（浏览器 / CDN） | `/api/ui-config` 曾带 `max-age=120, stale-while-revalidate=600`，改完最长 **12 分钟**不生效 | 配置类接口一律 `Cache-Control: no-store`：`/api/ui-config`、`/api/channels`、`/api/plugins` |
+| **isolate 内存缓存** | Worker 有多份 isolate，各自缓存配置；写的是 A，读的是 B，最长滞后一个 TTL | 配置写入后的读路径走 `getSystemSettingsFresh()` 强制直读 KV，并把 TTL 从 60s 收到 15s |
+
+排查手法：`node verify_display_e2e.mjs`（真浏览器走完整链路）。要点是**保留 `?fresh=<时间戳>` 绕过缓存再读一次**——如果绕过缓存是对的，说明写没问题、纯粹是缓存；如果绕过缓存也是旧的，那才是存储或读路径的 bug。
 
 ---
 
@@ -214,12 +243,20 @@ node build.mjs && node verify_check_codes.mjs
 # UI 布局几何断言 + 截图（搜索框高度/按钮溢出/分类栏换行与裁切）
 node ui_shot.mjs http://127.0.0.1:8787 庆余年 shot --mock
 
+# V1.3 特性回归：密码哈希 / 插件逐源开关 / 前台门禁 / 旧配置兼容 / 多 isolate 可见性（91 项，离线）
+node build.mjs && node verify_v13.mjs
+
+# 「结果展示选网盘」端到端回归：真服务 + 真浏览器 + 后台勾选交互（23 项，离线）
+node verify_display_e2e.mjs
+
 # V1.2 特性回归：PWA / 后台分页 / 网盘白名单 / KV 模式 / 版本一致性（40 项）
 node verify_v12.mjs https://<你的域名>
 ```
 
 `verify_full.mjs` 会模拟前端的「8 频道/片 × 4 路并发」调度跑满全量频道，输出每个关键词的结果总数、耗时与网盘分布。
-`verify_v12.mjs` 是本版新增的特性回归：一次跑完 PWA 资源与清单、`/admin` 四个分区、`/api/ui-config` 下发的网盘白名单、`result_cache_mode` 与缓存说明文案、版本号三处一致，以及 TVBox 路由确已 404。
+`verify_v13.mjs` 覆盖 V1.3 六项改动：后台不再回传哈希、登录后可自动升级旧明文、89 个插件源可逐行开关且空备注能清空、前台独立/复用两种密码模式与令牌失效、旧版 KV 配置能平滑升级，以及**「保存后立刻读取必须拿到最新配置」**（用 `import('dist/worker.js?case=N')` 造多个独立模块作用域模拟多 isolate）。
+`verify_display_e2e.mjs` 专治「后台选了没用」：起真 `serve-local`、在真 Chrome 里走完整链路（后台勾选 → 保存 → `/api/ui-config` → 前端搜索 → DOM 上的分类 Tab），并断言取消勾选的网盘既不进 Tab 也不进结果卡片。
+`verify_v12.mjs` 是一次跑完 PWA 资源与清单、`/admin` 四个分区、`/api/ui-config` 下发的网盘白名单、`result_cache_mode` 与缓存说明文案、版本号三处一致，以及 TVBox 路由确已 404。
 `verify_classify_check.mjs` 关注**分类是否准确**（「其他网盘」占比应接近 0）与测活是否可用；`verify_check_matrix.mjs` 用真假链接对照校验判定逻辑，防止误报。
 `verify_check_codes.mjs` 是**离线**回归：把各网盘的真实返回报文喂给 worker（替换 `fetch`），断言状态**和判定通道**都必须正确 —— 光看状态会「蒙对」（历史上 41012 就是靠页面兜底返回 404 蒙对了 invalid），所以必须同时断言 `method === 'api'`。
 `ui_shot.mjs` 用 Chrome DevTools Protocol 把「布局乱不乱」变成可断言数字：输入框高度 ≥40px、按钮不溢出容器/不压住输入框/文字不被裁切、分类栏无横向溢出与裁切。

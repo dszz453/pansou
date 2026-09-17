@@ -103,7 +103,25 @@ export interface PluginConfig {
  */
 export type ResultCacheMode = 'memory' | 'kv' | 'off';
 
+/**
+ * 前台访问密码的取值方式（V1.3 新增）
+ *
+ * - `reuse`（默认）：直接复用后台管理密码，改后台密码时前台密码同步跟着变；
+ * - `custom`：使用 `frontendPasswordHash` 里单独设置的前台密码。
+ */
+export type FrontendPasswordMode = 'reuse' | 'custom';
+
 export interface SystemSettings {
+  /**
+   * 后台管理密码的 PBKDF2-SHA256 哈希（V1.3 起不再存明文）。
+   * 格式见 `src/auth.ts`：`pbkdf2$sha256$<迭代次数>$<盐>$<派生密钥>`
+   */
+  adminPasswordHash?: string;
+  /**
+   * @deprecated 旧版**明文**密码字段。
+   * 仅为兼容历史 KV 配置而保留读取：管理员用旧密码成功登录一次后，
+   * 会自动改写为 `adminPasswordHash` 并把本字段清空。
+   */
   adminPassword?: string;
   concurrency: number;
   cacheTtl: number;
@@ -125,10 +143,24 @@ export interface SystemSettings {
   visibleCloudTypes?: string[];
   /** 首页/结果页是否展示「自动测活」开关 */
   showAutoCheck?: boolean;
+  /**
+   * 插件源备注（插件源 id → 自定义显示名）。
+   * 内置源清单只有英文 id（如 `jsnoteclub`、`mizixing`），后台可选填中文备注方便辨认。
+   */
+  pluginSourceLabels?: Record<string, string>;
+
+  /* ---------------- 前台访问密码（V1.3 新增） ---------------- */
+  /** 是否要求访客先输入密码才能搜索 */
+  frontendAuthEnabled?: boolean;
+  /** 前台密码取值方式：复用后台密码 / 单独设置 */
+  frontendPasswordMode?: FrontendPasswordMode;
+  /** 前台独立密码的 PBKDF2 哈希（仅 `frontendPasswordMode = 'custom'` 时生效） */
+  frontendPasswordHash?: string;
 }
 
 export interface Env {
   PANSOU_KV?: KVNamespace;
+  /** 后台管理密码。可写明文（自动升级为哈希）或 `pbkdf2$sha256$...` 哈希串 */
   ADMIN_PASSWORD?: string;
   DEFAULT_CONCURRENCY?: string;
   CACHE_TTL?: string;

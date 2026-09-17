@@ -13,6 +13,266 @@ import { VENDOR_VERSION } from './vendor.generated';
 import { ICONS_CSS } from './icons';
 import { CLOUD_BADGE_CSS, CLOUD_TYPES } from './cloud';
 import { APP_VERSION_LABEL, APP_NAME } from './version';
+import { ALL_PLUGIN_IDS, DEFAULT_PLUGINS } from './defaults';
+
+/**
+ * V1.3：插件改为「按源逐行开关」。
+ * 内置聚合节点背后是 89 个第三方资源站抓取源，过去被打包成一条「插件」配置，
+ * 后台只能整条启停；现在把源清单注入页面，每个源一行、各自独立开关。
+ * 保存时再把勾选结果合并回一条聚合节点配置（一次请求带全部已启用源）。
+ */
+const PLUGIN_SOURCES_JSON = JSON.stringify(ALL_PLUGIN_IDS);
+
+/** 插件配置被清空时的兜底聚合节点地址（正常流程下沿用 KV 里已存的地址） */
+const FALLBACK_PLUGIN_ENDPOINT = (DEFAULT_PLUGINS[0] && DEFAULT_PLUGINS[0].apiEndpoint) || '';
+
+/**
+ * V1.3：开放 API 文档。
+ *
+ * 原先这段内容挂在首页的「API 接口」弹窗上，V1.3 挪进后台（首页不再承载任何
+ * 非搜索功能），并补齐了 V1.2/V1.3 新增的接口。
+ * 以 JSON 形式注入，避免在 HTML 模板里手写转义。
+ */
+const API_GROUPS_JSON = JSON.stringify([
+  {
+    name: '搜索与检测',
+    icon: 'fa-magnifying-glass',
+    items: [
+      {
+        method: 'POST',
+        path: '/api/search',
+        summary: '核心聚合搜索',
+        desc:
+          '网页端会把全部启用频道拆成多个分片并发调用本接口（每片 8 个频道），插件再单独发一次请求，' +
+          '因此同一个关键词通常会产生多次调用，但每次调用之间结果是可合并的（按 URL 去重）。',
+        req: 'Body: { "kw": "三体", "res": "merge" }；可选 channels=[...]、plugins=[...]、plugins_only=true、no_plugins=true',
+        resp:
+          '{\n' +
+          '  "code": 0,\n' +
+          '  "message": "success",\n' +
+          '  "data": {\n' +
+          '    "total": 143,\n' +
+          '    "merged_by_type": {\n' +
+          '      "quark": [\n' +
+          '        { "url": "https://pan.quark.cn/s/xxxx", "password": "",\n' +
+          '          "note": "三体 全三季 4K", "datetime": "2026-09-01T10:00:00Z", "source": "panjclub" }\n' +
+          '      ],\n' +
+          '      "aliyun": [ /* ... */ ]\n' +
+          '    },\n' +
+          '    "_meta": { "cache_mode": "memory", "channels_queried": 8, "channels_ok": 8,\n' +
+          '               "plugins_ok": 1, "from_cache": 0, "elapsed_ms": 3200 }\n' +
+          '  }\n' +
+          '}'
+      },
+      {
+        method: 'POST',
+        path: '/api/check',
+        summary: '网盘链接失效检测',
+        desc: '网页端每条结果的「测活」按钮即调用本接口；GET 方式也支持（参数走 querystring）。',
+        req: 'Body: { "url": "https://pan.quark.cn/s/xxxx", "password": "abcd", "type": "quark" }',
+        resp:
+          '{\n' +
+          '  "code": 0,\n' +
+          '  "url": "https://pan.quark.cn/s/xxxx",\n' +
+          '  "valid": true,\n' +
+          '  "status": "valid",\n' +
+          '  "label": "有效"\n' +
+          '}\n' +
+          '\n' +
+          '// status 取值：valid / invalid / unknown\n' +
+          '// 注意：「提取码错误」类返回同样代表分享存在，会被判为 valid'
+      }
+    ]
+  },
+  {
+    name: '配置读取（公开）',
+    icon: 'fa-list',
+    items: [
+      {
+        method: 'GET',
+        path: '/api/channels',
+        summary: '启用中的 TG 频道清单',
+        req: '无',
+        resp:
+          '{\n' +
+          '  "code": 0,\n' +
+          '  "total": 143,\n' +
+          '  "enabled": 143,\n' +
+          '  "shard_size": 8,\n' +
+          '  "channels": ["tgsearchers7", "Aliyun_4K_Movies", "..."]\n' +
+          '}'
+      },
+      {
+        method: 'GET',
+        path: '/api/plugins',
+        summary: '启用中的插件源',
+        req: '无',
+        resp:
+          '{\n' +
+          '  "code": 0,\n' +
+          '  "total": 1,\n' +
+          '  "enabled": 1,\n' +
+          '  "plugins": [\n' +
+          '    { "id": "pansou_aggregate", "name": "PanSou 聚合节点", "type": "pansou",\n' +
+          '      "pluginIds": ["hunhepan", "jikepan", "..."], "pluginLabels": { "clxiong": "磁力熊" } }\n' +
+          '  ]\n' +
+          '}'
+      },
+      {
+        method: 'GET',
+        path: '/api/hot',
+        summary: '热门搜索词',
+        req: '无',
+        resp: '{ "hot_searches": ["庆余年", "流浪地球2", "..."] }'
+      },
+      {
+        method: 'GET',
+        path: '/api/ui-config',
+        summary: '网页端展示配置',
+        desc: '首页首屏只拉这一小段 JSON：版本号、展示哪些网盘、是否显示自动测活、前台是否需要密码。',
+        req: '无',
+        resp:
+          '{\n' +
+          '  "code": 0,\n' +
+          '  "version": "1.3.0",\n' +
+          '  "version_label": "V1.3",\n' +
+          '  "app_name": "PanSou Edge",\n' +
+          '  "visible_cloud_types": ["quark", "aliyun", "baidu"],\n' +
+          '  "cloud_labels": { "quark": "夸克网盘", "aliyun": "阿里云盘" },\n' +
+          '  "show_auto_check": true,\n' +
+          '  "frontend_auth_enabled": false\n' +
+          '}'
+      },
+      {
+        method: 'GET',
+        path: '/api/health',
+        summary: '健康检查',
+        desc: '部署后自检、监控探针都可用它；不泄露任何凭据。',
+        req: '无',
+        resp:
+          '{\n' +
+          '  "status": "ok",\n' +
+          '  "version": "1.3.0",\n' +
+          '  "version_label": "V1.3",\n' +
+          '  "kv_bound": true,\n' +
+          '  "channels_enabled": 143,\n' +
+          '  "plugins_enabled": 1,\n' +
+          '  "result_cache_mode": "memory",\n' +
+          '  "credentials_hashed": true,\n' +
+          '  "frontend_auth_enabled": false,\n' +
+          '  "memory_cache": { "settings": 1, "channels": 0, "feeds": 0, "plugins": 0, "checks": 0 }\n' +
+          '}'
+      }
+    ]
+  },
+  {
+    name: '前台访问密码（V1.3）',
+    icon: 'fa-key',
+    items: [
+      {
+        method: 'POST',
+        path: '/api/frontend/auth',
+        summary: '用前台密码换取访问令牌',
+        desc:
+          '仅当后台开启了「前台访问密码」时生效。密码校验通过后返回一个由密码哈希派生的无状态令牌，' +
+          '把它放进请求头 X-Frontend-Token 即可调用数据类接口。改密码令牌自动失效，无需服务端会话。',
+        req: 'Body: { "password": "你的前台密码" }',
+        resp:
+          '{\n' +
+          '  "code": 0,\n' +
+          '  "enabled": true,\n' +
+          '  "token": "9f2c1a...（40 位十六进制）",\n' +
+          '  "expires_in": null\n' +
+          '}\n' +
+          '\n' +
+          '// 未开启前台密码时：{ "code": 0, "enabled": false, "message": "前台未开启访问密码" }\n' +
+          '// 密码错误时 HTTP 401：{ "code": 401, "message": "密码错误" }'
+      }
+    ]
+  },
+  {
+    name: '后台管理（需管理员密码）',
+    icon: 'fa-sliders',
+    items: [
+      {
+        method: 'POST',
+        path: '/api/admin/settings',
+        summary: '读取 / 保存全部配置',
+        desc:
+          '所有请求都必须带 Authorization: Bearer <后台密码>。GET 只回传「密码是否已设置」的布尔状态，' +
+          '任何哈希都不出服务器；POST 提交的密码会在服务端用 PBKDF2-SHA256 加盐哈希后落盘。',
+        req:
+          'GET 无参数；POST Body 为配置片段，例如\n' +
+          '{ "adminPassword": "新后台密码" }\n' +
+          '{ "frontendAuthEnabled": true, "frontendPasswordMode": "custom", "frontendPassword": "访客密码" }\n' +
+          '{ "frontendPasswordMode": "reuse", "clearFrontendPassword": true }',
+        resp:
+          'GET:\n' +
+          '{\n' +
+          '  "channels": [ /* ... */ ],\n' +
+          '  "plugins": [ /* ... */ ],\n' +
+          '  "resultCacheMode": "memory",\n' +
+          '  "kv_bound": true,\n' +
+          '  "admin_password_set": true,\n' +
+          '  "admin_password_from_env": false,\n' +
+          '  "frontend_password_set": false\n' +
+          '}\n' +
+          '\n' +
+          'POST: { "code": 0, "message": "保存成功" }'
+      },
+      {
+        method: 'GET',
+        path: '/api/admin/defaults',
+        summary: '出厂配置',
+        desc: '回传内置的全部 TG 频道与默认插件节点，供后台「恢复出厂配置」使用。需管理员密码。',
+        req: '无',
+        resp: '{ "channels": [ /* 143 个频道 */ ], "plugins": [ /* 聚合节点 */ ], "hotSearches": [ "...", ] }'
+      }
+    ]
+  },
+  {
+    name: '诊断（V1.3 起受前台密码保护）',
+    icon: 'fa-stethoscope',
+    items: [
+      {
+        method: 'GET',
+        path: '/api/debug/cache',
+        summary: '缓存与配额诊断',
+        desc: '查看当前缓存模式、KV 是否绑定、各内存缓存条目数。此接口保持公开，便于监控。',
+        req: '无',
+        resp:
+          '{\n' +
+          '  "version": "1.3.0",\n' +
+          '  "result_cache_mode": "memory",\n' +
+          '  "kv_bound": true,\n' +
+          '  "memory_cache": { "settings": 1, "channels": 12, "feeds": 8, "plugins": 1, "checks": 0 },\n' +
+          '  "note": "频道搜索结果仅缓存在 Worker isolate 内存中……"\n' +
+          '}'
+      },
+      {
+        method: 'GET',
+        path: '/api/debug/plugin',
+        summary: '插件节点连通诊断',
+        req: '?kw=流浪地球&rounds=3&id=hunhepan,jikepan（id 可选，缺省用全部已启用源）',
+        resp: '{ "attempts": [ { "ok": true, "status": 200, "ms": 4210, "total": 88 } ] }'
+      },
+      {
+        method: 'GET',
+        path: '/api/debug/tg',
+        summary: 'Telegram 抓取诊断',
+        req: '?ch=PanjClub&kw=三体',
+        resp: '{ "ok": true, "status": 200, "blocks": 12, "bytes": 84213 }'
+      },
+      {
+        method: 'GET',
+        path: '/api/debug/fetch',
+        summary: '任意 URL 抓取诊断',
+        req: '?url=https://example.com',
+        resp: '{ "ok": true, "status": 200, "content_type": "text/html", "bytes": 1256, "ms": 320 }'
+      }
+    ]
+  }
+]);
 
 /**
  * 注入到内联脚本里的网盘元数据（key / 中文名 / 徽标色 / 默认是否可见）。
@@ -188,8 +448,8 @@ ${CLOUD_BADGE_CSS}
               <div class="text-2xl font-bold text-slate-800">{{ enabledChannelsCount }}<span class="text-sm font-normal text-slate-400">/{{ settings.channels.length }}</span></div>
             </div>
             <div class="bg-white rounded-2xl border border-slate-200 p-4">
-              <div class="text-[11px] text-slate-400 mb-1">启用插件</div>
-              <div class="text-2xl font-bold text-slate-800">{{ enabledPluginsCount }}<span class="text-sm font-normal text-slate-400">/{{ settings.plugins.length }}</span></div>
+              <div class="text-[11px] text-slate-400 mb-1">启用插件源</div>
+              <div class="text-2xl font-bold text-slate-800">{{ enabledPluginCount }}<span class="text-sm font-normal text-slate-400">/{{ pluginSources.length }}</span></div>
             </div>
             <div class="bg-white rounded-2xl border border-slate-200 p-4">
               <div class="text-[11px] text-slate-400 mb-1">展示网盘类型</div>
@@ -219,12 +479,17 @@ ${CLOUD_BADGE_CSS}
                 <span class="font-mono text-slate-700">{{ settings.channels.length }}</span>
               </div>
               <div class="flex justify-between py-1.5 border-b border-slate-100">
-                <span class="text-slate-500">单次搜索插件上限</span>
-                <span class="font-mono text-slate-700">{{ settings.maxPluginsPerSearch }}</span>
+                <span class="text-slate-500">前台访问密码</span>
+                <span :class="frontendAuthOn ? 'text-emerald-600 font-medium' : 'text-slate-500 font-medium'">{{ frontendAuthOn ? (settings.frontendPasswordMode === 'custom' ? '已开启（独立密码）' : '已开启（复用后台密码）') : '未开启' }}</span>
+              </div>
+              <div class="flex justify-between py-1.5 border-b border-slate-100">
+                <span class="text-slate-500">凭据存储</span>
+                <span :class="passwordHashed ? 'text-emerald-600 font-medium' : 'text-amber-600 font-medium'">{{ passwordHashed ? 'PBKDF2 哈希' : '待升级' }}</span>
               </div>
             </div>
             <p class="mt-3 text-[11px] text-slate-400 leading-relaxed">
               说明：全站频道会由前端自动拆片并发调度，因此「频道总数」可以远超单次并发数，不影响覆盖率。
+              插件源则不同 —— 所有已启用的源会被<strong>合并成一次聚合节点请求</strong>，因此勾得越多单次响应越慢。
             </p>
           </div>
 
@@ -318,133 +583,97 @@ ${CLOUD_BADGE_CSS}
           </div>
         </section>
 
-        <!-- ---------------- 插件 ---------------- -->
+        <!-- ---------------- 插件（V1.3：按源逐行开关） ---------------- -->
         <section v-if="activeTab === 'plugins'" class="space-y-3">
-          <div class="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3">
-            <div class="text-xs text-slate-600">
-              启用 <strong class="text-slate-800">{{ enabledPluginsCount }}</strong> / {{ settings.plugins.length }} 个插件
-              <span class="text-slate-400 ml-2">（共引用 {{ pluginIdCount }} 个外部子源）</span>
+          <!-- 工具栏 -->
+          <div class="bg-white rounded-2xl border border-slate-200 p-3 sm:p-4 flex flex-wrap items-center gap-2">
+            <input
+              v-model="pluginFilter"
+              type="search"
+              placeholder="筛选插件源…"
+              class="flex-1 min-w-[140px] px-3 py-2 text-xs border border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+            />
+            <div class="flex flex-wrap items-center gap-1.5">
+              <button @click="toggleAllPlugins(true)" class="px-2.5 py-2 text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition">全启用</button>
+              <button @click="toggleAllPlugins(false)" class="px-2.5 py-2 text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition">全禁用</button>
+              <button @click="resetPluginSources" class="px-2.5 py-2 text-xs bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-lg transition whitespace-nowrap">回到内置默认</button>
+              <button @click="addPluginSource" class="px-2.5 py-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition whitespace-nowrap">+ 添加源</button>
             </div>
-            <button @click="addPlugin" class="px-3 py-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium transition">
-              <i class="fa-solid fa-plus mr-1"></i>添加插件
-            </button>
           </div>
 
-          <div v-if="settings.plugins.length === 0" class="bg-white rounded-2xl border border-dashed border-slate-300 p-10 text-center">
-            <i class="fa-solid fa-plug-circle-xmark text-3xl text-slate-300 mb-3"></i>
-            <p class="text-sm text-slate-500 mb-1">暂无插件配置</p>
-            <p class="text-xs text-slate-400 mb-4">插件用于补充 TG 频道覆盖不到的第三方资源站</p>
-            <button @click="resetToDefaults" class="px-4 py-2 text-xs bg-amber-50 text-amber-700 hover:bg-amber-100 rounded-lg font-medium transition">载入内置插件节点</button>
-          </div>
-
-          <div v-else class="space-y-2.5">
-            <div
-              v-for="pl in settings.plugins"
-              :key="pl.id"
-              class="bg-white rounded-2xl border transition overflow-hidden"
-              :class="pl.enabled ? 'border-slate-200' : 'border-slate-200 bg-slate-50/60 opacity-75'"
-            >
-              <!-- 摘要行（默认折叠，信息一眼可见） -->
-              <div class="p-3 sm:p-4 flex items-start gap-3">
+          <div class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <!-- 统计条 + 聚合节点连通测试 -->
+            <div class="px-3 sm:px-4 py-2.5 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              <div class="text-[11px] text-slate-500">
+                已启用 <strong class="text-slate-700">{{ enabledPluginCount }}</strong> / {{ pluginSources.length }} 个插件源
+                <span class="text-slate-400 ml-1">（显示 {{ filteredPluginSources.length }} 条）</span>
+              </div>
+              <div class="flex items-center gap-2">
                 <button
-                  @click="togglePluginEnabled(pl)"
-                  class="mt-0.5 relative inline-flex w-9 h-5 shrink-0 rounded-full transition-colors"
-                  :class="pl.enabled ? 'bg-emerald-500' : 'bg-slate-300'"
-                  :title="pl.enabled ? '点击停用' : '点击启用'"
+                  @click="testAggregator"
+                  :disabled="pluginTesting"
+                  class="px-2.5 py-1.5 text-[11px] bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition flex items-center gap-1 disabled:opacity-60"
                 >
-                  <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform" :class="pl.enabled ? 'translate-x-4' : 'translate-x-0'"></span>
+                  <i class="fa-solid" :class="pluginTesting ? 'fa-circle-notch fa-spin' : 'fa-vial'"></i>测试聚合节点
                 </button>
+                <span v-if="pluginTestResult" class="text-[11px] px-2 py-1 rounded-lg" :class="pluginTestResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'">
+                  {{ pluginTestResult.text }}
+                </span>
+              </div>
+            </div>
 
-                <div class="flex-1 min-w-0">
-                  <div class="flex flex-wrap items-center gap-1.5">
-                    <span class="font-semibold text-sm text-slate-800 truncate">{{ pl.name || pl.id }}</span>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded font-mono"
-                      :class="pl.type === 'pansou' ? 'bg-blue-50 text-blue-600' : 'bg-violet-50 text-violet-600'">{{ pl.type }}</span>
-                    <span v-if="pl.type === 'pansou' && (pl.pluginIds || []).length" class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
-                      {{ (pl.pluginIds || []).length }} 个子源
-                    </span>
-                  </div>
-                  <div class="mt-1 text-[11px] font-mono text-slate-400 truncate" :title="pl.apiEndpoint">{{ pl.apiEndpoint || '（未填写接口地址）' }}</div>
+            <p class="px-3 sm:px-4 py-2.5 text-[11px] text-slate-400 leading-relaxed border-b border-slate-100">
+              每个插件源独立一行，勾选即启用。已启用的源在搜索时会被<strong class="text-slate-500">合并成一次聚合节点请求</strong>，
+              所以勾得越多覆盖越广、单次响应也越慢；不确定的源建议关掉。备注只用于你自己辨认，不影响抓取。
+            </p>
 
-                  <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                    <button @click="toggleExpand(pl)" class="px-2.5 py-1 text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition flex items-center gap-1">
-                      <i class="fa-solid text-[10px]" :class="expandedPlugin === pl.id ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
-                      {{ expandedPlugin === pl.id ? '收起' : '编辑' }}
-                    </button>
-                    <button @click="testPlugin(pl)" :disabled="testingPlugin === pl.id" class="px-2.5 py-1 text-[11px] bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-lg transition flex items-center gap-1 disabled:opacity-60">
-                      <i class="fa-solid text-[10px]" :class="testingPlugin === pl.id ? 'fa-circle-notch fa-spin' : 'fa-vial'"></i>连通测试
-                    </button>
-                    <button @click="removePlugin(pl)" class="px-2.5 py-1 text-[11px] text-rose-600 hover:bg-rose-50 rounded-lg transition">删除</button>
+            <!-- 桌面端表格 -->
+            <div class="hidden md:block max-h-[62vh] overflow-y-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 sticky top-0 text-slate-500 border-b border-slate-100">
+                  <tr>
+                    <th class="p-2.5 w-14 text-center font-medium">启用</th>
+                    <th class="p-2.5 w-56 font-medium">插件源 ID</th>
+                    <th class="p-2.5 font-medium">备注（可选）</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100">
+                  <tr
+                    v-for="src in filteredPluginSources"
+                    :key="src.id"
+                    class="hover:bg-slate-50/70 transition"
+                    :class="src.enabled ? '' : 'opacity-60'"
+                  >
+                    <td class="p-2.5 text-center">
+                      <input type="checkbox" v-model="src.enabled" class="w-4 h-4 rounded text-indigo-600 align-middle">
+                    </td>
+                    <td class="p-2.5 font-mono text-slate-700 truncate">{{ src.id }}</td>
+                    <td class="p-2.5">
+                      <input v-model="src.label" maxlength="40" placeholder="如：磁力熊" class="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500">
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
 
-                    <span v-if="testResult[pl.id]" class="text-[11px] px-2 py-1 rounded-lg"
-                      :class="testResult[pl.id].ok ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'">
-                      {{ testResult[pl.id].text }}
-                    </span>
-                  </div>
+            <!-- 移动端卡片 -->
+            <div class="md:hidden max-h-[62vh] overflow-y-auto divide-y divide-slate-100">
+              <div
+                v-for="src in filteredPluginSources"
+                :key="src.id"
+                class="p-3 flex items-start gap-3"
+                :class="src.enabled ? '' : 'opacity-60'"
+              >
+                <input type="checkbox" v-model="src.enabled" class="mt-0.5 w-5 h-5 shrink-0 rounded text-indigo-600">
+                <div class="flex-1 min-w-0 space-y-1.5">
+                  <div class="font-mono text-xs text-slate-700 truncate">{{ src.id }}</div>
+                  <input v-model="src.label" maxlength="40" placeholder="备注（可选）" class="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500">
                 </div>
               </div>
+            </div>
 
-              <!-- 展开编辑区 -->
-              <div v-if="expandedPlugin === pl.id" class="px-3 sm:px-4 pb-4 pt-1 border-t border-slate-100 bg-slate-50/50 space-y-3">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label class="block text-[11px] text-slate-500 mb-1">插件 ID（唯一标识）</label>
-                    <input v-model="pl.id" class="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:border-indigo-500">
-                  </div>
-                  <div>
-                    <label class="block text-[11px] text-slate-500 mb-1">显示名称</label>
-                    <input v-model="pl.name" class="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500">
-                  </div>
-                </div>
-
-                <div>
-                  <label class="block text-[11px] text-slate-500 mb-1">接口地址 Endpoint</label>
-                  <input v-model="pl.apiEndpoint" placeholder="https://example.com/api/search" class="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:border-indigo-500">
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label class="block text-[11px] text-slate-500 mb-1">插件类型</label>
-                    <select v-model="pl.type" class="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500">
-                      <option value="pansou">pansou 兼容聚合节点</option>
-                      <option value="custom">通用 REST API</option>
-                    </select>
-                  </div>
-                  <div v-if="pl.type === 'custom'">
-                    <label class="block text-[11px] text-slate-500 mb-1">请求方式</label>
-                    <select v-model="pl.method" class="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs outline-none focus:border-indigo-500">
-                      <option value="GET">GET</option>
-                      <option value="POST">POST</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div v-if="pl.type === 'pansou'">
-                  <label class="block text-[11px] text-slate-500 mb-1">
-                    远端子源 ID 列表
-                    <span class="text-slate-400">（逗号分隔，留空表示用节点默认的全部源）</span>
-                  </label>
-                  <textarea
-                    :value="(pl.pluginIds || []).join(',')"
-                    @input="pl.pluginIds = $event.target.value.split(',').map(s => s.trim()).filter(Boolean)"
-                    rows="3"
-                    class="w-full px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:border-indigo-500"
-                  ></textarea>
-                  <p class="mt-1 text-[11px] text-slate-400">当前 {{ (pl.pluginIds || []).length }} 个：{{ (pl.pluginIds || []).join('、') || '（未指定）' }}</p>
-                </div>
-
-                <div v-else>
-                  <label class="block text-[11px] text-slate-500 mb-1">响应字段映射（可选，留空自动探测）</label>
-                  <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
-                    <input v-model="pl.responseMapping.resultPath" placeholder="结果路径 如 data.list" class="px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:border-indigo-500">
-                    <input v-model="pl.responseMapping.titleField" placeholder="标题字段 title" class="px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:border-indigo-500">
-                    <input v-model="pl.responseMapping.urlField" placeholder="链接字段 url" class="px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:border-indigo-500">
-                    <input v-model="pl.responseMapping.pwdField" placeholder="提取码字段 password" class="px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:border-indigo-500">
-                    <input v-model="pl.responseMapping.contentField" placeholder="内容字段 content" class="px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:border-indigo-500">
-                    <input v-model="pl.responseMapping.dateField" placeholder="时间字段 datetime" class="px-2.5 py-2 border border-slate-200 rounded-lg text-xs font-mono outline-none focus:border-indigo-500">
-                  </div>
-                </div>
-              </div>
+            <div v-if="filteredPluginSources.length === 0" class="p-8 text-center text-xs text-slate-400">
+              没有匹配「{{ pluginFilter }}」的插件源
             </div>
           </div>
         </section>
@@ -537,6 +766,50 @@ ${CLOUD_BADGE_CSS}
           </div>
         </section>
 
+        <!-- ---------------- API 接口（V1.3：从首页挪进后台） ---------------- -->
+        <section v-if="activeTab === 'api'" class="space-y-4">
+          <div class="bg-white rounded-2xl border border-slate-200 p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <i class="fa-solid fa-code text-indigo-600"></i>开放 API 接口文档
+              </h3>
+              <div class="flex items-center gap-2">
+                <code class="px-2 py-1 rounded bg-slate-100 font-mono text-[11px] text-slate-600">{{ siteOrigin }}</code>
+                <button @click="copyText(siteOrigin, '站点地址已复制')" class="px-2.5 py-1.5 text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition">复制</button>
+              </div>
+            </div>
+            <p class="text-[11px] text-slate-500 mt-2 leading-relaxed">
+              全部接口开放 CORS，可直接在浏览器或任意后端调用。
+              <template v-if="frontendAuthOn">
+                当前<strong class="text-amber-600">已开启前台访问密码</strong>：数据类接口（搜索 / 测活 / 频道 / 插件 / 诊断）需附加请求头
+                <code class="font-mono px-1 py-0.5 bg-slate-100 rounded">X-Frontend-Token</code>，令牌由下方「前台访问密码」接口换取；
+              </template>
+              <template v-else>当前未开启前台访问密码，数据类接口公开可调用；</template>
+              后台管理接口始终需要 <code class="font-mono px-1 py-0.5 bg-slate-100 rounded">Authorization: Bearer &lt;后台密码&gt;</code>。
+            </p>
+          </div>
+
+          <div v-for="g in apiGroups" :key="g.name" class="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+            <div class="px-3 sm:px-4 py-2.5 bg-slate-50 border-b border-slate-100 text-xs font-bold text-slate-700 flex items-center gap-2">
+              <i class="fa-solid" :class="g.icon"></i>{{ g.name }}
+            </div>
+            <div class="divide-y divide-slate-100">
+              <div v-for="ep in g.items" :key="ep.method + ep.path" class="p-3 sm:p-4 space-y-2">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono" :class="ep.method === 'GET' ? 'bg-emerald-50 text-emerald-700' : 'bg-blue-50 text-blue-700'">{{ ep.method }}</span>
+                  <code class="font-mono text-xs font-semibold text-slate-800">{{ ep.path }}</code>
+                  <span class="text-[11px] text-slate-500">{{ ep.summary }}</span>
+                </div>
+                <p v-if="ep.desc" class="text-[11px] text-slate-500 leading-relaxed">{{ ep.desc }}</p>
+                <div v-if="ep.req" class="text-[11px] text-slate-500">
+                  <span class="text-slate-400">请求：</span><code class="font-mono text-slate-600 whitespace-pre-wrap break-all">{{ ep.req }}</code>
+                </div>
+                <pre class="bg-slate-900 text-slate-200 rounded-xl p-3 font-mono text-[11px] leading-relaxed overflow-x-auto">{{ ep.resp }}</pre>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <!-- ---------------- 系统设置 ---------------- -->
         <section v-if="activeTab === 'system'" class="space-y-4">
           <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-4">
@@ -555,28 +828,113 @@ ${CLOUD_BADGE_CSS}
                 <p class="mt-1 text-[11px] text-slate-400">仅对「KV 缓存模式」生效；内存模式用固定 TTL。</p>
               </div>
               <div>
-                <label class="block text-[11px] text-slate-500 mb-1">单次搜索插件上限</label>
-                <input type="number" min="1" max="10" v-model.number="settings.maxPluginsPerSearch" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:border-indigo-500">
-              </div>
-              <div>
                 <label class="block text-[11px] text-slate-500 mb-1">前端单次分片频道数</label>
                 <input type="number" min="1" max="10" v-model.number="settings.maxChannelsPerSearch" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:border-indigo-500">
               </div>
             </div>
           </div>
 
+          <!-- 后台登录密码（V1.3：哈希存储） -->
           <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <i class="fa-solid fa-shield-halved text-indigo-600"></i>后台管理密码
+              </h3>
+              <div class="flex items-center gap-1.5">
+                <span v-if="settings.admin_password_from_env" class="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-100">来自环境变量 ADMIN_PASSWORD</span>
+                <span v-else-if="passwordHashed" class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-100">已哈希存储</span>
+                <span v-else class="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">仍是默认密码，建议立即修改</span>
+              </div>
+            </div>
+            <div>
+              <label class="block text-[11px] text-slate-500 mb-1">修改密码（留空则保持不变）</label>
+              <input type="password" v-model="newPassword" autocomplete="new-password" placeholder="新密码" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:border-indigo-500">
+              <p class="mt-1 text-[11px] text-slate-400 leading-relaxed">
+                保存时会在服务端用 <strong>PBKDF2-SHA256 + 16 字节随机盐</strong>（10000 轮）哈希后再写入 KV，
+                明文既不落盘也不回传；旧版本遗留在 KV 里的明文密码会在你下次登录成功后自动升级为哈希。
+                修改成功后当前会话自动沿用新密码，无需重新登录。
+              </p>
+            </div>
+          </div>
+
+          <!-- 前台访问密码（V1.3 新增） -->
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
+                <i class="fa-solid fa-key text-indigo-600"></i>前台访问密码
+              </h3>
+              <button
+                @click="settings.frontendAuthEnabled = !settings.frontendAuthEnabled"
+                class="relative inline-flex w-11 h-6 shrink-0 rounded-full transition-colors"
+                :class="settings.frontendAuthEnabled ? 'bg-emerald-500' : 'bg-slate-300'"
+              >
+                <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform" :class="settings.frontendAuthEnabled ? 'translate-x-5' : 'translate-x-0'"></span>
+              </button>
+            </div>
+            <p class="text-[11px] text-slate-500 leading-relaxed">
+              开启后，访客必须先在首页输入密码才能搜索。首页 HTML 与
+              <code class="font-mono px-1 bg-slate-100 rounded">/api/ui-config</code> 始终公开（否则登录门都渲染不出来），
+              搜索 / 测活 / 频道 / 插件 / 诊断接口会校验访问令牌。密码同样只存哈希。
+            </p>
+
+            <template v-if="settings.frontendAuthEnabled">
+              <div class="space-y-2">
+                <label
+                  class="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition"
+                  :class="settings.frontendPasswordMode === 'reuse' ? 'border-indigo-300 bg-indigo-50/50' : 'border-slate-200 hover:bg-slate-50'"
+                >
+                  <input type="radio" value="reuse" v-model="settings.frontendPasswordMode" class="mt-0.5 w-4 h-4 text-indigo-600">
+                  <div class="flex-1 min-w-0">
+                    <span class="font-semibold text-xs text-slate-800">复用后台管理密码</span>
+                    <p class="text-[11px] text-slate-500 mt-0.5">访客密码 = 后台密码，改后台密码时前台同步跟着变，只记一套。</p>
+                  </div>
+                </label>
+                <label
+                  class="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition"
+                  :class="settings.frontendPasswordMode === 'custom' ? 'border-indigo-300 bg-indigo-50/50' : 'border-slate-200 hover:bg-slate-50'"
+                >
+                  <input type="radio" value="custom" v-model="settings.frontendPasswordMode" class="mt-0.5 w-4 h-4 text-indigo-600">
+                  <div class="flex-1 min-w-0">
+                    <span class="font-semibold text-xs text-slate-800">使用独立的前台密码</span>
+                    <p class="text-[11px] text-slate-500 mt-0.5">访客拿到的是另一套密码，改前台密码不会影响你登录后台。</p>
+                  </div>
+                </label>
+              </div>
+
+              <div v-if="settings.frontendPasswordMode === 'custom'" class="pt-1 border-t border-slate-100">
+                <label class="block text-[11px] text-slate-500 mb-1 mt-3">前台密码（留空则保持不变）</label>
+                <input type="password" v-model="newFrontendPassword" autocomplete="new-password" placeholder="访客访问密码" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:border-indigo-500">
+                <p class="mt-1 text-[11px] text-slate-400">
+                  <span v-if="settings.frontend_password_set" class="text-emerald-600 font-medium">已设置独立密码</span>
+                  <span v-else class="text-amber-600 font-medium">尚未设置，保存后会自动退回「复用后台密码」以免出现无密码可验的空档</span>
+                </p>
+                <button
+                  v-if="settings.frontend_password_set"
+                  @click="clearFrontendPassword"
+                  class="mt-2 px-3 py-1.5 text-[11px] text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition"
+                >
+                  <i class="fa-solid fa-eraser mr-1"></i>清除独立密码
+                </button>
+              </div>
+
+              <div class="px-3 py-2 rounded-xl bg-slate-50 border border-slate-100 text-[11px] text-slate-500 leading-relaxed">
+                <i class="fa-solid fa-circle-info text-slate-400 mr-1"></i>
+                生效后，本站的数据接口（含 <code class="font-mono">/api/search</code>）必须带
+                <code class="font-mono">X-Frontend-Token</code> 才能调用。用第三方程序调用接口时，
+                先 POST <code class="font-mono">/api/frontend/auth</code> 换取令牌即可。改密码后旧令牌立即失效。
+              </div>
+            </template>
+          </div>
+
+          <!-- Telegram 反代 -->
+          <div class="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
             <h3 class="font-bold text-sm text-slate-800 flex items-center gap-2">
-              <i class="fa-solid fa-shield-halved text-indigo-600"></i>反代与安全
+              <i class="fa-solid fa-network-wired text-indigo-600"></i>Telegram 反代
             </h3>
             <div>
               <label class="block text-[11px] text-slate-500 mb-1">自定义 Telegram 镜像反代 URL（可选）</label>
               <input v-model="settings.tgProxyUrl" placeholder="如 https://tg.yourdomain.com" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm font-mono outline-none focus:border-indigo-500">
-            </div>
-            <div>
-              <label class="block text-[11px] text-slate-500 mb-1">修改管理员密码（留空则保持不变）</label>
-              <input type="password" v-model="newPassword" autocomplete="new-password" placeholder="新密码" class="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm outline-none focus:border-indigo-500">
-              <p class="mt-1 text-[11px] text-slate-400">修改成功后当前会话自动沿用新密码，无需重新登录。</p>
+              <p class="mt-1 text-[11px] text-slate-400">留空则直连 t.me。当所在地区访问 t.me 不畅时再填。</p>
             </div>
           </div>
 
@@ -639,11 +997,20 @@ ${CLOUD_BADGE_CSS}
 </div>
 
 <script>
-  const { createApp, ref, computed, onMounted, watch } = Vue;
+  const { createApp, ref, computed, onMounted, watch, nextTick } = Vue;
 
   const TOKEN_KEY = 'pansou_admin_token';
 
   const CLOUDS = ${CLOUDS_JSON};
+
+  /** V1.3：内置聚合节点背后的全部插件源 id（每个源在后台占一行） */
+  const PLUGIN_SOURCES = ${PLUGIN_SOURCES_JSON};
+
+  /** 插件配置被清空时的兜底节点地址 */
+  const FALLBACK_PLUGIN_ENDPOINT = ${JSON.stringify(FALLBACK_PLUGIN_ENDPOINT)};
+
+  /** V1.3：开放 API 文档数据 */
+  const API_GROUPS = ${API_GROUPS_JSON};
 
   const CACHE_MODES = [
     { key: 'memory', name: '仅内存缓存（推荐）', desc: '频道搜索结果不写入 KV，只保留在当前边缘节点内存中，重复搜索依然秒回。KV 仅用于存后台配置与插件结果缓存（每个关键词 1 个键、6 小时），单次搜索的 KV 写入从 140+ 降到 1，彻底避免写额度被打满。' },
@@ -670,20 +1037,33 @@ ${CLOUD_BADGE_CSS}
         concurrency: 6,
         cacheTtl: 300,
         maxChannelsPerSearch: 8,
-        maxPluginsPerSearch: 2,
         tgProxyUrl: '',
         resultCacheMode: 'memory',
         visibleCloudTypes: [],
-        showAutoCheck: true
+        showAutoCheck: true,
+        // V1.3
+        frontendAuthEnabled: false,
+        frontendPasswordMode: 'reuse',
+        admin_password_hashed: false,
+        admin_password_from_env: false,
+        frontend_password_set: false
       });
 
       const newPassword = ref('');
+      const newFrontendPassword = ref('');
+      /** 点过「清除独立密码」后置位，保存时告诉服务端清空前台密码哈希 */
+      const clearFrontendPwd = ref(false);
       const channelFilter = ref('');
-      const expandedPlugin = ref('');
-      const testingPlugin = ref('');
-      const testResult = ref({});
       const batchText = ref('');
       const batchEnableAll = ref(true);
+
+      /* ---- 插件源（V1.3：每个源独立一行） ---- */
+      const pluginFilter = ref('');
+      const pluginSources = ref([]);
+      const pluginTesting = ref(false);
+      const pluginTestResult = ref(null);
+      /** 聚合节点地址：不在界面展示，保存时原样带回，避免弄丢已有节点地址 */
+      let pluginEndpoint = FALLBACK_PLUGIN_ENDPOINT;
 
       const versionLabel = ${JSON.stringify(APP_VERSION_LABEL)};
       const appName = ${JSON.stringify(APP_NAME)};
@@ -691,8 +1071,9 @@ ${CLOUD_BADGE_CSS}
       const tabs = computed(() => [
         { key: 'overview', name: '总览', icon: 'fa-gauge-high' },
         { key: 'channels', name: 'TG 频道', icon: 'fa-bullhorn', badge: settings.value.channels.length },
-        { key: 'plugins', name: '搜索插件', icon: 'fa-plug', badge: settings.value.plugins.length },
+        { key: 'plugins', name: '搜索插件', icon: 'fa-plug', badge: pluginSources.value.length },
         { key: 'display', name: '结果展示', icon: 'fa-filter' },
+        { key: 'api', name: 'API 接口', icon: 'fa-code' },
         { key: 'system', name: '系统设置', icon: 'fa-gear' }
       ]);
 
@@ -731,12 +1112,23 @@ ${CLOUD_BADGE_CSS}
       });
 
       const enabledChannelsCount = computed(() => settings.value.channels.filter(c => c.enabled).length);
-      const enabledPluginsCount = computed(() => settings.value.plugins.filter(p => p.enabled).length);
-      const pluginIdCount = computed(() => {
-        const set = {};
-        for (const p of settings.value.plugins) for (const id of (p.pluginIds || [])) set[id] = 1;
-        return Object.keys(set).length;
+
+      /* ---- 插件源（V1.3） ---- */
+      const enabledPluginCount = computed(() => pluginSources.value.filter(s => s.enabled).length);
+
+      const filteredPluginSources = computed(() => {
+        const kw = pluginFilter.value.trim().toLowerCase();
+        if (!kw) return pluginSources.value;
+        return pluginSources.value.filter(
+          s => s.id.toLowerCase().indexOf(kw) >= 0 || (s.label || '').toLowerCase().indexOf(kw) >= 0
+        );
       });
+
+      /* ---- 安全状态 ---- */
+      // 后台密码是否已哈希存储（来自接口下发的状态位，哈希本身不会出服务器）
+      const passwordHashed = computed(() => !!settings.value.admin_password_hashed);
+      const frontendAuthOn = computed(() => settings.value.frontendAuthEnabled === true);
+      const siteOrigin = typeof location !== 'undefined' ? location.origin : '';
 
       const showToast = (msg, type) => {
         toast.value = { msg, type: type || 'ok' };
@@ -751,24 +1143,63 @@ ${CLOUD_BADGE_CSS}
         return data;
       };
 
+      /**
+       * 从「聚合节点配置 + 源备注」还原出后台要展示的插件源列表（V1.3）。
+       * 节点地址本身不进界面，只在内存里带着走，保存时原样写回。
+       */
+      const buildPluginSources = (plugins, labels) => {
+        const enabledIds = {};
+        let nodeEnabled = false;
+        let endpoint = '';
+
+        (plugins || []).forEach(p => {
+          if (p.type !== 'pansou') return;
+          if (p.enabled) nodeEnabled = true;
+          if (!endpoint && p.apiEndpoint) endpoint = p.apiEndpoint;
+          (p.pluginIds || []).forEach(id => { enabledIds[id] = 1; });
+        });
+
+        // 内置源清单 + KV 里出现过的自定义源（避免自定义源在界面上「消失」）
+        const catalog = PLUGIN_SOURCES.slice();
+        Object.keys(enabledIds).forEach(id => {
+          if (catalog.indexOf(id) < 0) catalog.push(id);
+        });
+
+        return {
+          endpoint: endpoint || FALLBACK_PLUGIN_ENDPOINT,
+          sources: catalog.map(id => ({
+            id,
+            label: (labels && labels[id]) || '',
+            // 整个节点被停用时，所有源都显示为未启用
+            enabled: nodeEnabled && !!enabledIds[id]
+          }))
+        };
+      };
+
       const applySettings = (data) => {
         if (!Array.isArray(data.plugins)) data.plugins = [];
-        data.plugins.forEach(p => {
-          if (!p.responseMapping) p.responseMapping = {};
-          if (!Array.isArray(p.pluginIds)) p.pluginIds = [];
-          if (!p.method) p.method = 'GET';
-        });
         if (!Array.isArray(data.channels)) data.channels = [];
         if (!Array.isArray(data.visibleCloudTypes)) {
           data.visibleCloudTypes = CLOUDS.filter(c => c.defaultVisible).map(c => c.key);
         }
         if (!data.resultCacheMode) data.resultCacheMode = 'memory';
         if (typeof data.showAutoCheck !== 'boolean') data.showAutoCheck = true;
-        if (typeof data.maxPluginsPerSearch !== 'number') data.maxPluginsPerSearch = 2;
+        // V1.3：前台访问密码
+        if (typeof data.frontendAuthEnabled !== 'boolean') data.frontendAuthEnabled = false;
+        if (data.frontendPasswordMode !== 'custom') data.frontendPasswordMode = 'reuse';
+
+        const derived = buildPluginSources(data.plugins, data.pluginSourceLabels);
+        pluginEndpoint = derived.endpoint;
+        pluginSources.value = derived.sources;
 
         settings.value = data;
         kvBound.value = data.kv_bound !== false;
-        dirty.value = false;
+        newPassword.value = '';
+        newFrontendPassword.value = '';
+        clearFrontendPwd.value = false;
+        pluginTestResult.value = null;
+        // 用 markClean 而不是直接 dirty.value = false —— 见「脏标记」一节的说明
+        markClean();
       };
 
       const login = async () => {
@@ -808,19 +1239,40 @@ ${CLOUD_BADGE_CSS}
 
         saving.value = true;
         try {
+          // V1.3：插件源列表 → 合并回一条聚合节点配置
+          // （已启用的源在一次搜索里会被合并成一次节点请求，所以不产生额外请求数）
+          const enabledIds = pluginSources.value.filter(s => s.enabled).map(s => s.id);
+          const labels = {};
+          pluginSources.value.forEach(s => {
+            if (s.label && s.label.trim()) labels[s.id] = s.label.trim();
+          });
+
           const payload = {
             channels: settings.value.channels,
-            plugins: settings.value.plugins,
+            plugins: [
+              {
+                id: 'pansou_aggregate',
+                name: 'PanSou 聚合节点',
+                enabled: enabledIds.length > 0,
+                type: 'pansou',
+                apiEndpoint: pluginEndpoint,
+                pluginIds: enabledIds
+              }
+            ],
+            pluginSourceLabels: labels,
             concurrency: Number(settings.value.concurrency) || 6,
             maxChannelsPerSearch: Number(settings.value.maxChannelsPerSearch) || 8,
-            maxPluginsPerSearch: Number(settings.value.maxPluginsPerSearch) || 2,
             cacheTtl: Number(settings.value.cacheTtl) || 300,
             tgProxyUrl: settings.value.tgProxyUrl || '',
             resultCacheMode: settings.value.resultCacheMode || 'memory',
             visibleCloudTypes: settings.value.visibleCloudTypes || [],
-            showAutoCheck: settings.value.showAutoCheck !== false
+            showAutoCheck: settings.value.showAutoCheck !== false,
+            frontendAuthEnabled: settings.value.frontendAuthEnabled === true,
+            frontendPasswordMode: settings.value.frontendPasswordMode || 'reuse'
           };
           if (newPassword.value.trim()) payload.adminPassword = newPassword.value.trim();
+          if (newFrontendPassword.value.trim()) payload.frontendPassword = newFrontendPassword.value.trim();
+          if (clearFrontendPwd.value) payload.clearFrontendPassword = true;
 
           const res = await fetch('/api/admin/settings', {
             method: 'POST',
@@ -831,11 +1283,27 @@ ${CLOUD_BADGE_CSS}
 
           if (res.ok && data.code === 0) {
             if (payload.adminPassword) {
+              // 服务端存的是哈希，浏览器这边仍用明文当 Bearer 凭据
               localStorage.setItem(TOKEN_KEY, payload.adminPassword);
               pwdInput.value = payload.adminPassword;
+              settings.value.admin_password_hashed = true;
+              settings.value.admin_password_from_env = false;
               newPassword.value = '';
             }
-            dirty.value = false;
+            if (payload.frontendPassword) {
+              settings.value.frontend_password_set = true;
+              newFrontendPassword.value = '';
+              clearFrontendPwd.value = false;
+            }
+            if (payload.clearFrontendPassword) {
+              settings.value.frontend_password_set = false;
+              settings.value.frontendPasswordMode = 'reuse';
+              clearFrontendPwd.value = false;
+            }
+            // 保存成功：把状态落定为「已保存」。
+            // 上面几行刚改过 settings.value（哈希/密码状态位），异步 watcher
+            // 会把 dirty 又翻成 true，用户看到「有未保存的修改」就以为没保存成功。
+            markClean();
             showToast('配置已保存并生效');
           } else {
             showToast(data.message || '保存失败，请检查 KV 绑定', 'error');
@@ -886,51 +1354,81 @@ ${CLOUD_BADGE_CSS}
         showToast('成功导入 ' + count + ' 个频道，记得保存');
       };
 
-      /* ---------------- 插件 ---------------- */
-      const togglePluginEnabled = (pl) => { pl.enabled = !pl.enabled; dirty.value = true; };
-      const toggleExpand = (pl) => { expandedPlugin.value = expandedPlugin.value === pl.id ? '' : pl.id; };
+      /* ---------------- 插件源（V1.3：每个源独立一行） ---------------- */
+      const toggleAllPlugins = (on) => {
+        pluginSources.value.forEach(s => { s.enabled = on; });
+        dirty.value = true;
+      };
 
-      const addPlugin = () => {
-        const id = prompt('插件 ID（唯一标识，字母数字下划线）：');
-        if (!id || !id.trim()) return;
-        const endpoint = prompt('接口地址 Endpoint：');
-        if (!endpoint || !endpoint.trim()) return;
-        settings.value.plugins.push({
-          id: id.trim(),
-          name: id.trim(),
-          enabled: true,
-          type: 'pansou',
-          apiEndpoint: endpoint.trim(),
-          pluginIds: [],
-          responseMapping: {}
+      const resetPluginSources = () => {
+        // 「回到内置默认」= 内置清单全开并清空备注（自定义源保持原开关）
+        pluginSources.value.forEach(s => {
+          if (PLUGIN_SOURCES.indexOf(s.id) >= 0) {
+            s.enabled = true;
+            s.label = '';
+          }
         });
-        expandedPlugin.value = id.trim();
+        dirty.value = true;
+        showToast('已恢复为内置全部启用，记得点保存');
+      };
+
+      const addPluginSource = () => {
+        const raw = prompt('插件源 ID（节点支持的源标识，如 clxiong）：');
+        if (!raw || !raw.trim()) return;
+        const id = raw.trim().replace(/[^A-Za-z0-9_.-]/g, '');
+        if (!id) { showToast('源 ID 格式不合法', 'error'); return; }
+        if (pluginSources.value.some(s => s.id === id)) { showToast('该源已在列表中', 'error'); return; }
+        pluginSources.value.unshift({ id, label: '', enabled: true });
         dirty.value = true;
       };
 
-      const removePlugin = (pl) => {
-        if (!confirm('确定删除插件「' + (pl.name || pl.id) + '」吗？')) return;
-        const idx = settings.value.plugins.indexOf(pl);
-        if (idx >= 0) settings.value.plugins.splice(idx, 1);
-        dirty.value = true;
-      };
-
-      const testPlugin = async (pl) => {
-        testingPlugin.value = pl.id;
+      /** 用当前已启用的源打一次聚合节点，验证节点是否可达 */
+      const testAggregator = async () => {
+        const ids = pluginSources.value.filter(s => s.enabled).map(s => s.id);
+        if (ids.length === 0) {
+          pluginTestResult.value = { ok: false, text: '没有启用任何插件源' };
+          return;
+        }
+        pluginTesting.value = true;
+        pluginTestResult.value = null;
         try {
-          const r = await fetch('/api/debug/plugin?id=' + encodeURIComponent(pl.id) + '&kw=' + encodeURIComponent('流浪地球') + '&rounds=1');
+          const r = await fetch(
+            '/api/debug/plugin?rounds=1&kw=' + encodeURIComponent('流浪地球') +
+              '&ids=' + encodeURIComponent(ids.join(',')),
+            { headers: { Authorization: 'Bearer ' + currentToken() } }
+          );
           const d = await r.json();
           const a = (d.attempts || [])[0] || {};
           if (a.ok) {
-            testResult.value[pl.id] = { ok: true, text: '通 ' + a.status + ' · ' + a.ms + 'ms · ' + (a.total != null ? a.total + ' 条' : '无计数') };
+            pluginTestResult.value = {
+              ok: true,
+              text: '通 ' + a.status + ' · ' + a.ms + 'ms · ' + (a.total != null ? a.total + ' 条' : '无计数')
+            };
           } else {
-            testResult.value[pl.id] = { ok: false, text: a.error ? '失败：' + a.error.slice(0, 40) : 'HTTP ' + (a.status || '?') };
+            pluginTestResult.value = {
+              ok: false,
+              text: a.error ? '失败：' + String(a.error).slice(0, 40) : 'HTTP ' + (a.status || '?')
+            };
           }
         } catch (e) {
-          testResult.value[pl.id] = { ok: false, text: '请求异常' };
+          pluginTestResult.value = { ok: false, text: '请求异常' };
         } finally {
-          testingPlugin.value = '';
+          pluginTesting.value = false;
         }
+      };
+
+      const clearFrontendPassword = () => {
+        newFrontendPassword.value = '';
+        clearFrontendPwd.value = true;
+        showToast('保存后将清除独立密码，并退回「复用后台密码」');
+      };
+
+      const copyText = (text, msg) => {
+        if (!text) return;
+        navigator.clipboard
+          .writeText(text)
+          .then(() => showToast(msg || '已复制'))
+          .catch(() => showToast('复制失败，请手动选取', 'error'));
       };
 
       /* ---------------- 网盘展示 ---------------- */
@@ -971,15 +1469,17 @@ ${CLOUD_BADGE_CSS}
           version: versionLabel,
           exportedAt: new Date().toISOString(),
           channels: settings.value.channels,
-          plugins: settings.value.plugins,
+          // V1.3：导出插件源开关 + 备注（不含节点地址，导入端沿用本地已存地址）
+          pluginSources: pluginSources.value.map(s => ({ id: s.id, enabled: s.enabled, label: s.label || '' })),
           concurrency: settings.value.concurrency,
           cacheTtl: settings.value.cacheTtl,
           maxChannelsPerSearch: settings.value.maxChannelsPerSearch,
-          maxPluginsPerSearch: settings.value.maxPluginsPerSearch,
           tgProxyUrl: settings.value.tgProxyUrl,
           resultCacheMode: settings.value.resultCacheMode,
           visibleCloudTypes: settings.value.visibleCloudTypes,
-          showAutoCheck: settings.value.showAutoCheck
+          showAutoCheck: settings.value.showAutoCheck,
+          frontendAuthEnabled: settings.value.frontendAuthEnabled === true,
+          frontendPasswordMode: settings.value.frontendPasswordMode || 'reuse'
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
         const a = document.createElement('a');
@@ -998,9 +1498,26 @@ ${CLOUD_BADGE_CSS}
           try {
             const d = JSON.parse(String(reader.result));
             if (Array.isArray(d.channels) && d.channels.length) settings.value.channels = d.channels;
-            if (Array.isArray(d.plugins)) settings.value.plugins = d.plugins;
+            // 兼容两种导入格式：V1.3 的 pluginSources，或旧版的 plugins
+            if (Array.isArray(d.pluginSources)) {
+              const byId = {};
+              d.pluginSources.forEach(s => { if (s && s.id) byId[s.id] = s; });
+              pluginSources.value.forEach(s => {
+                if (byId[s.id]) {
+                  s.enabled = byId[s.id].enabled !== false;
+                  s.label = byId[s.id].label || '';
+                }
+              });
+            } else if (Array.isArray(d.plugins)) {
+              const derived = buildPluginSources(d.plugins, d.pluginSourceLabels);
+              pluginSources.value = derived.sources;
+            }
             if (typeof d.resultCacheMode === 'string') settings.value.resultCacheMode = d.resultCacheMode;
             if (Array.isArray(d.visibleCloudTypes)) settings.value.visibleCloudTypes = d.visibleCloudTypes;
+            if (typeof d.frontendAuthEnabled === 'boolean') settings.value.frontendAuthEnabled = d.frontendAuthEnabled;
+            if (d.frontendPasswordMode === 'custom' || d.frontendPasswordMode === 'reuse') {
+              settings.value.frontendPasswordMode = d.frontendPasswordMode;
+            }
             dirty.value = true;
             showToast('配置已载入，请点击保存生效');
           } catch (e) {
@@ -1018,11 +1535,13 @@ ${CLOUD_BADGE_CSS}
           if (!res.ok) { showToast('获取默认配置失败', 'error'); return; }
           const d = await res.json();
           settings.value.channels = d.channels || [];
-          settings.value.plugins = (d.plugins || []).map(p => Object.assign({ responseMapping: {}, pluginIds: [], method: 'GET' }, p));
           settings.value.maxChannelsPerSearch = d.maxChannelsPerSearch || 8;
-          settings.value.maxPluginsPerSearch = d.maxPluginsPerSearch || 2;
           if (Array.isArray(d.visibleCloudTypes)) settings.value.visibleCloudTypes = d.visibleCloudTypes;
           if (d.resultCacheMode) settings.value.resultCacheMode = d.resultCacheMode;
+          // 插件源一并恢复为「内置全开」
+          const derived = buildPluginSources(d.plugins, null);
+          pluginEndpoint = derived.endpoint;
+          pluginSources.value = derived.sources;
           dirty.value = true;
           showToast('已载入内置配置，请点击保存生效');
         } catch (e) {
@@ -1030,8 +1549,23 @@ ${CLOUD_BADGE_CSS}
         }
       };
 
-      /* ---------------- 脏标记 ---------------- */
-      watch(settings, () => { dirty.value = true; }, { deep: true });
+      /* ---------------- 脏标记 ----------------
+       * ⚠️ 这里的 watcher 是**异步**触发的（Vue 默认 flush: 'pre'）：
+       * 赋值语句执行完才轮到回调。所以「先 settings.value = data，紧接着
+       * dirty.value = false」是没用的 —— 回调随后又把 dirty 翻回 true，
+       * 表现为①页面一加载就恒显「有未保存的修改」；②保存成功后提示又冒出来，
+       * 用户会以为「保存没生效 / 无法保存」。
+       * 正确做法：赋值期间挂起 watcher，并用 nextTick 在回调跑完之后再落定。
+       */
+      let hydrating = false;
+      watch(settings, () => { if (hydrating) return; dirty.value = true; }, { deep: true });
+
+      /** 把当前配置认定为「已保存」状态（在 applySettings / save 成功后调用） */
+      const markClean = () => {
+        hydrating = true;
+        dirty.value = false;
+        nextTick(() => { hydrating = false; dirty.value = false; });
+      };
 
       onMounted(async () => {
         const token = localStorage.getItem(TOKEN_KEY);
@@ -1050,13 +1584,17 @@ ${CLOUD_BADGE_CSS}
       return {
         authed, loggingIn, loginError, pwdInput, showPwd, login, logout,
         saving, kvBound, activeTab, tabs, settings, toast, dirty,
-        newPassword, channelFilter, expandedPlugin, testingPlugin, testResult,
-        batchText, batchEnableAll,
+        newPassword, newFrontendPassword, clearFrontendPassword,
+        channelFilter, batchText, batchEnableAll,
         allClouds, orderedCloudKeys, isCloudVisible, cloudLabelOf, cloudBadgeOf, visibleCloudNamesText,
         cacheModes: CACHE_MODES, cacheModeLabel,
-        filteredChannels, enabledChannelsCount, enabledPluginsCount, pluginIdCount,
+        filteredChannels, enabledChannelsCount,
         toggleAllChannels, addChannel, removeChannel, doBatchImport,
-        togglePluginEnabled, toggleExpand, addPlugin, removePlugin, testPlugin,
+        // V1.3：插件源 / 安全状态 / API 文档
+        pluginFilter, pluginSources, pluginTesting, pluginTestResult,
+        filteredPluginSources, enabledPluginCount,
+        toggleAllPlugins, resetPluginSources, addPluginSource, testAggregator,
+        passwordHashed, frontendAuthOn, siteOrigin, copyText, apiGroups: API_GROUPS,
         toggleCloud, selectAllClouds, selectMainClouds, moveCloud,
         exportConfig, importConfig, resetToDefaults, save,
         versionLabel, appName

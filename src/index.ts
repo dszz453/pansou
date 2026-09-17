@@ -1,5 +1,6 @@
 import {
   Env,
+  SystemSettings,
   PluginConfig,
   SearchResultItem,
   MergedByType,
@@ -7,7 +8,19 @@ import {
   PanSouSearchResponse,
   CloudType
 } from './types';
-import { getSystemSettings, saveSystemSettings, verifyAdminAuth, buildDefaultSettings } from './admin';
+import {
+  getSystemSettings,
+  getSystemSettingsFresh,
+  saveSystemSettings,
+  verifyAdminAuth,
+  buildDefaultSettings,
+  verifyFrontendPassword,
+  frontendAccessToken,
+  isFrontendAuthEnabled,
+  isUsingDefaultPassword,
+  tokenMatches
+} from './admin';
+import { hashPassword, isPasswordHash } from './auth';
 import { DEFAULT_MAX_CHANNELS, DEFAULT_MAX_PLUGINS } from './defaults';
 import { searchTgChannel, fetchTgChannelFeed, filterItemsByKeyword } from './tg';
 import {
@@ -78,6 +91,36 @@ const FEED_CACHE_TTL = 6 * 3600;
 
 /** 合法 TG 频道名（防 SSRF：只允许字母数字下划线） */
 const CHANNEL_NAME_REGEX = /^[A-Za-z0-9_]{4,64}$/;
+
+/**
+ * 前台访问控制（V1.3）
+ * ------------------------------------------------------------
+ * 后台开启「前台访问密码」后，所有**数据类**接口（搜索 / 测活 / 频道 / 插件 / 诊断）
+ * 都要求携带 `X-Frontend-Token`；管理员用 Bearer 密码同样可以直连
+ * （后台的「连通测试」按钮就走这条路径）。
+ *
+ * 注意：首页 HTML、`/api/ui-config`、`/api/hot`、`/api/health` 保持公开 ——
+ * 否则访客连登录门都渲染不出来。
+ */
+async function requireFrontendAccess(
+  request: Request,
+  env: Env,
+  settings: SystemSettings
+): Promise<boolean> {
+  if (!isFrontendAuthEnabled(settings)) return true;
+
+  const token = (request.headers.get('X-Frontend-Token') || '').trim();
+  if (token) {
+    const expected = await frontendAccessToken(settings, env);
+    if (expected && tokenMatches(token, expected)) return true;
+  }
+
+  return verifyAdminAuth(request, env);
+}
+
+function unauthorizedResponse(): Response {
+  return jsonResponse({ code: 401, message: '需要访问密码' }, 401);
+}
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -174,7 +217,10 @@ export default {
     // 1.2 网页端 UI 配置：网盘可见列表 / 是否展示自动测活
     //     单独开一个轻量接口，前端首屏只拉这一小段 JSON
     if (path === '/api/ui-config') {
-      const settings = await getSystemSettings(env);
+      // 强制直读 KV：这个接口决定「网页端展示哪些网盘」，
+      // 后台一改就必须立刻可见。走 15 秒内存缓存时，写的是 A isolate、
+      // 读的是 B isolate，就会出现「后台选了没用」的错觉。
+      const settings = await getSystemSettingsFresh(env);
       const visible = Array.isArray(settings.visibleCloudTypes)
         ? settings.visibleCloudTypes
         : DEFAULT_VISIBLE_CLOUDS;
@@ -190,11 +236,55 @@ export default {
             acc[c.key] = c.label;
             return acc;
           }, {} as Record<string, string>),
-          show_auto_check: settings.showAutoCheck !== false
+          show_auto_check: settings.showAutoCheck !== false,
+          /** V1.3：前台是否开启了访问密码（前端据此决定先弹登录门） */
+          frontend_auth_enabled: isFrontendAuthEnabled(settings)
         },
         200,
-        { 'Cache-Control': 'public, max-age=120, stale-while-revalidate=600' }
+        // 这份配置直接决定「网页端展示哪些网盘」，后台一改就必须立刻可见。
+        // 之前给了 max-age=120 + stale-while-revalidate=600，一旦被中间层缓存，
+        // 改动最长要 12 分钟才生效，表现就是「后台选了没用」。
+        { 'Cache-Control': 'no-store' }
       );
+    }
+
+    // 1.3 前台访问密码 /api/frontend/auth
+    //     开启前台密码后，访客先用密码换一个无状态访问令牌，
+    //     之后所有数据接口都带 `X-Frontend-Token`。
+    if (path === '/api/frontend/auth') {
+      const settings = await getSystemSettings(env);
+
+      if (!isFrontendAuthEnabled(settings)) {
+        return jsonResponse({ code: 0, enabled: false, message: '前台未开启访问密码' });
+      }
+
+      if (request.method !== 'POST') {
+        return jsonResponse({ code: 405, message: '请使用 POST 提交密码' }, 405);
+      }
+
+      let password = '';
+      try {
+        const body: any = await request.json();
+        password = typeof body?.password === 'string' ? body.password : '';
+      } catch (e) {
+        password = '';
+      }
+
+      if (!password.trim()) {
+        return jsonResponse({ code: 400, message: '请输入访问密码' }, 400);
+      }
+
+      const ok = await verifyFrontendPassword(password.trim(), settings, env);
+      if (!ok) {
+        return jsonResponse({ code: 401, message: '密码错误' }, 401);
+      }
+
+      return jsonResponse({
+        code: 0,
+        enabled: true,
+        token: await frontendAccessToken(settings, env),
+        expires_in: null // 无状态令牌，改密码即失效
+      });
     }
 
     // 2. 热门搜索词 /api/hot
@@ -207,7 +297,9 @@ export default {
 
     // 3. 频道清单 /api/channels —— 前端据此把全部频道拆成多个分片并发调度
     if (path === '/api/channels') {
-      const settings = await getSystemSettings(env);
+      // 同 ui-config：频道启停是后台可改的配置，必须直读 KV 才谈得上「立刻生效」
+      const settings = await getSystemSettingsFresh(env);
+      if (!(await requireFrontendAccess(request, env, settings))) return unauthorizedResponse();
       const enabled = settings.channels
         .filter(c => c.enabled)
         .sort((a, b) => (a.priority || 2) - (b.priority || 2))
@@ -219,13 +311,16 @@ export default {
         shard_size: Math.min(8, settings.maxChannelsPerSearch || DEFAULT_MAX_CHANNELS),
         channels: enabled
       }, 200, {
-        'Cache-Control': 'public, max-age=600, stale-while-revalidate=3600'
+        // 同 ui-config：频道启停是后台可改的配置，不能让中间层缓存住
+        'Cache-Control': 'no-store'
       });
     }
 
     // 3.5 插件清单 /api/plugins —— 前端据此决定搜索时是否单独发一次插件请求
     if (path === '/api/plugins') {
-      const settings = await getSystemSettings(env);
+      // 插件源开关同样是后台配置，且这个接口会带出源备注名 —— 一并直读 KV
+      const settings = await getSystemSettingsFresh(env);
+      if (!(await requireFrontendAccess(request, env, settings))) return unauthorizedResponse();
       const enabled = settings.plugins.filter(p => p.enabled && p.apiEndpoint);
       return jsonResponse(
         {
@@ -236,17 +331,22 @@ export default {
             id: p.id,
             name: p.name,
             type: p.type,
-            apiEndpoint: p.apiEndpoint,
-            pluginIds: p.pluginIds || []
+            pluginIds: p.pluginIds || [],
+            /** V1.3：已启用插件源的备注名（未填备注时前端自行回退成 id） */
+            pluginLabels: settings.pluginSourceLabels || {}
           }))
         },
         200,
-        { 'Cache-Control': 'public, max-age=300' }
+        // 插件源开关同样是后台配置，且这个接口会带出源备注名
+        { 'Cache-Control': 'no-store' }
       );
     }
 
     // 3.6 网盘链接失效检测 /api/check —— 前端「测活」按钮的后端
     if (path === '/api/check') {
+      if (!(await requireFrontendAccess(request, env, await getSystemSettings(env)))) {
+        return unauthorizedResponse();
+      }
       let targetUrl = url.searchParams.get('url') || '';
       let targetPwd = url.searchParams.get('pwd') || url.searchParams.get('password') || '';
       let targetType = url.searchParams.get('type') || '';
@@ -291,6 +391,10 @@ export default {
         cache_ttl: settings.cacheTtl,
         /** V1.2：搜索结果缓存模式，memory 表示不消耗 KV 写配额 */
         result_cache_mode: settings.resultCacheMode || 'memory',
+        /** V1.3：凭据是否已改为哈希存储（true 表示 KV 里不再有明文密码） */
+        credentials_hashed: !!(settings.adminPasswordHash || isPasswordHash(env.ADMIN_PASSWORD || '')),
+        /** V1.3：前台是否开启了访问密码 */
+        frontend_auth_enabled: isFrontendAuthEnabled(settings),
         visible_cloud_types: settings.visibleCloudTypes || DEFAULT_VISIBLE_CLOUDS,
         /** 当前 isolate 内存缓存条目数，用于确认「没在用 KV 却依然有命中」 */
         memory_cache: cacheStats()
@@ -316,6 +420,9 @@ export default {
 
     // 4.5 诊断接口 /api/debug/tg —— 检查云端能否直连 t.me 并解析出消息块
     if (path === '/api/debug/tg') {
+      if (!(await requireFrontendAccess(request, env, await getSystemSettings(env)))) {
+        return unauthorizedResponse();
+      }
       const ch = url.searchParams.get('ch') || 'PanjClub';
       const kw = url.searchParams.get('kw') || '';
       const before = url.searchParams.get('before') || '';
@@ -352,8 +459,10 @@ export default {
     // 4.6 插件诊断 /api/debug/plugin —— 查看 Worker 侧调用插件节点时的真实状态码/耗时
     if (path === '/api/debug/plugin') {
       const settings = await getSystemSettings(env);
+      if (!(await requireFrontendAccess(request, env, settings))) return unauthorizedResponse();
       const kw = url.searchParams.get('kw') || '流浪地球';
       const id = url.searchParams.get('id') || '';
+      const idsParam = url.searchParams.get('ids') || '';
       const rounds = Math.min(5, Math.max(1, parseInt(url.searchParams.get('rounds') || '3', 10) || 3));
 
       const targets = id
@@ -427,6 +536,9 @@ export default {
     //     用于排查网盘测活、反代等场景下「本地能通、边缘不通」的问题。
     //     ?url=目标地址 &method=GET|POST &body=原始请求体 &referer= &origin= &full=1
     if (path === '/api/debug/fetch') {
+      if (!(await requireFrontendAccess(request, env, await getSystemSettings(env)))) {
+        return unauthorizedResponse();
+      }
       const target = url.searchParams.get('url') || '';
       if (!/^https?:\/\//i.test(target)) {
         return jsonResponse({ ok: false, message: '需要合法的 http(s) url 参数' }, 400);
@@ -485,11 +597,21 @@ export default {
       }
 
       if (request.method === 'GET') {
-        const settings = await getSystemSettings(env);
+        // 后台必须读**最新**配置：getSystemSettings 走 isolate 内存缓存（15 秒），
+        // 而 Cloudflare 会同时跑多个 isolate —— 刚保存完就刷新后台时，
+        // 请求可能落到一个还抱着旧配置的实例上，看到保存前的值，
+        // 于是「改了不下十次都没反应」。这里强制跳过缓存直读 KV。
+        const settings = await getSystemSettingsFresh(env);
+        const { adminPasswordHash, adminPassword, frontendPasswordHash, ...rest } = settings;
         return jsonResponse({
-          ...settings,
+          ...rest,
           kv_bound: !!env.PANSOU_KV,
-          adminPassword: undefined
+          admin_password_is_default: await isUsingDefaultPassword(settings, env),
+          // V1.3：任何哈希都不出服务器，只回传「是否已设置」这类布尔状态
+          admin_password_set: !!(adminPasswordHash || adminPassword || env.ADMIN_PASSWORD),
+          admin_password_hashed: isPasswordHash(adminPasswordHash || ''),
+          admin_password_from_env: !adminPasswordHash && !adminPassword && !!env.ADMIN_PASSWORD,
+          frontend_password_set: !!frontendPasswordHash
         });
       }
 
@@ -498,8 +620,7 @@ export default {
           const body: any = await request.json();
           const current = await getSystemSettings(env);
 
-          const next = {
-            ...current,
+          const next: Partial<SystemSettings> = {
             channels: Array.isArray(body.channels) ? body.channels : current.channels,
             // 插件允许传空数组（= 主动关掉全部插件），因此只判断是否为数组
             plugins: Array.isArray(body.plugins) ? body.plugins : current.plugins,
@@ -532,11 +653,33 @@ export default {
               ? (normalizeVisibleClouds(body.visibleCloudTypes) ?? current.visibleCloudTypes)
               : current.visibleCloudTypes,
             showAutoCheck:
-              typeof body.showAutoCheck === 'boolean' ? body.showAutoCheck : current.showAutoCheck
+              typeof body.showAutoCheck === 'boolean' ? body.showAutoCheck : current.showAutoCheck,
+            // V1.3：插件源备注 / 前台访问密码
+            pluginSourceLabels:
+              body.pluginSourceLabels && typeof body.pluginSourceLabels === 'object'
+                ? body.pluginSourceLabels
+                : current.pluginSourceLabels,
+            frontendAuthEnabled:
+              typeof body.frontendAuthEnabled === 'boolean'
+                ? body.frontendAuthEnabled
+                : current.frontendAuthEnabled,
+            frontendPasswordMode:
+              body.frontendPasswordMode === 'custom' || body.frontendPasswordMode === 'reuse'
+                ? body.frontendPasswordMode
+                : current.frontendPasswordMode
           };
 
+          // 后台密码：立刻哈希后再落盘，明文绝不进 KV
           if (typeof body.adminPassword === 'string' && body.adminPassword.trim()) {
-            next.adminPassword = body.adminPassword.trim();
+            next.adminPasswordHash = await hashPassword(body.adminPassword.trim());
+            next.adminPassword = ''; // 顺手清掉历史遗留的明文
+          }
+
+          // 前台独立密码：同样只存哈希
+          if (typeof body.frontendPassword === 'string' && body.frontendPassword.trim()) {
+            next.frontendPasswordHash = await hashPassword(body.frontendPassword.trim());
+          } else if (body.clearFrontendPassword === true) {
+            next.frontendPasswordHash = '';
           }
 
           await saveSystemSettings(env, next);
@@ -574,6 +717,9 @@ export default {
 
     // 7. 核心搜索接口 /api/search 或 /api/panso/search
     if (path === '/api/search' || path === '/api/panso/search') {
+      if (!(await requireFrontendAccess(request, env, await getSystemSettings(env)))) {
+        return unauthorizedResponse();
+      }
       return handleSearch(request, env, ctx);
     }
 

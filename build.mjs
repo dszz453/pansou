@@ -99,42 +99,60 @@ console.log(`[build] dist/worker.js 打包完成 (${(size / 1024).toFixed(0)}KB)
 // 生成出 `/^https?://t.me/(s/)?/` 这种非法正则 + 断行字符串，
 // 整个 <script> 语法错误 → Vue 完全不挂载 → 页面变成一堆关不掉的「死弹窗」。
 // 所以每次构建后必须把内联脚本抽出来做一次语法检查。
+// V1.3：把后台页也纳入校验 —— 它的内联脚本比首页还长，一旦语法错误
+// 同样是「页面全白/点了没反应」，而构建本身却会成功，非常难排查。
 await esbuild.build({
-  entryPoints: ['src/ui.html.ts'],
+  entryPoints: ['src/ui.html.ts', 'src/admin.ui.ts'],
   bundle: true,
   format: 'esm',
-  outfile: 'dist/_ui_check.mjs',
+  outdir: 'dist/_check',
   platform: 'neutral',
   target: 'es2022',
+  // 输出 .mjs，避免 Node 因缺少 "type": "module" 反复探测模块类型并告警
+  outExtension: { '.js': '.mjs' },
   logLevel: 'error',
 });
 
-const { HTML_TEMPLATE } = await import('./dist/_ui_check.mjs');
-const scriptBlocks = [...HTML_TEMPLATE.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+const { HTML_TEMPLATE } = await import('./dist/_check/ui.html.mjs');
+const { ADMIN_TEMPLATE } = await import('./dist/_check/admin.ui.mjs');
 
-if (scriptBlocks.length === 0) {
-  console.error('[build] ❌ 未在 HTML 模板中找到内联脚本，校验失败');
-  process.exit(1);
+const TEMPLATES = [
+  { name: '首页 src/ui.html.ts', html: HTML_TEMPLATE },
+  { name: '后台 src/admin.ui.ts', html: ADMIN_TEMPLATE }
+];
+
+let totalBlocks = 0;
+let scriptOk = true;
+
+for (const tpl of TEMPLATES) {
+  const scriptBlocks = [...tpl.html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+
+  if (scriptBlocks.length === 0) {
+    console.error(`[build] ❌ ${tpl.name} 中未找到内联脚本，校验失败`);
+    process.exit(1);
+  }
+
+  scriptBlocks.forEach((blk, idx) => {
+    totalBlocks++;
+    const inline = blk[1];
+    try {
+      new Function(inline);
+    } catch (err) {
+      scriptOk = false;
+      console.error(
+        `[build] ❌ ${tpl.name} 第 ${idx + 1} 段内联脚本存在语法错误，页面会整体瘫痪：`
+      );
+      console.error('        ' + err.message);
+      // 尽量定位到出错行
+      const lines = inline.split('\n');
+      const suspect = lines.findIndex(l => /\(\/\^?https\?:?\/\//.test(l) || /t\.me\/\(/.test(l));
+      const at = suspect >= 0 ? suspect : 0;
+      for (let i = Math.max(0, at - 2); i < Math.min(lines.length, at + 3); i++) {
+        console.error(`        ${i + 1}| ${lines[i]}`);
+      }
+    }
+  });
 }
 
-let scriptOk = true;
-scriptBlocks.forEach((blk, idx) => {
-  const inline = blk[1];
-  try {
-    new Function(inline);
-  } catch (err) {
-    scriptOk = false;
-    console.error(`[build] ❌ 第 ${idx + 1} 段内联脚本存在语法错误，前端会整体瘫痪：`);
-    console.error('        ' + err.message);
-    // 尽量定位到出错行
-    const lines = inline.split('\n');
-    const suspect = lines.findIndex(l => /\(\/\^?https\?:?\/\//.test(l) || /t\.me\/\(/.test(l));
-    const at = suspect >= 0 ? suspect : 0;
-    for (let i = Math.max(0, at - 2); i < Math.min(lines.length, at + 3); i++) {
-      console.error(`        ${i + 1}| ${lines[i]}`);
-    }
-  }
-});
-
 if (!scriptOk) process.exit(1);
-console.log(`[build] ✅ 内联前端脚本语法校验通过（${scriptBlocks.length} 段）`);
+console.log(`[build] ✅ 内联脚本语法校验通过（${TEMPLATES.length} 个页面 / ${totalBlocks} 段）`);
